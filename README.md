@@ -28,6 +28,18 @@ uvicorn app.main:create_app --factory --reload
 
 开发默认使用 SQLite 和内存缓存。生产部署请使用 Docker Compose 中的 PostgreSQL 和 Redis。
 
+## 一键检查
+
+```bash
+python scripts/check_all.py --pnpm pnpm
+```
+
+也可以连同本地运行态 smoke 一起跑：
+
+```bash
+python scripts/check_all.py --pnpm pnpm --with-smoke
+```
+
 ## Docker Compose
 
 ```bash
