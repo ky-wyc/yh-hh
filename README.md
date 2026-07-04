@@ -57,6 +57,12 @@ python scripts/onebot_simulate.py --ws-url ws://127.0.0.1:8000/onebot/ws --group
 
 如果配置了 `ALLOWED_GROUPS`，模拟脚本的 `--group-id` 必须在白名单里。
 
+本地开发也可以一条命令完成 HTTP 和反向 WebSocket 检查：
+
+```bash
+python scripts/local_smoke.py --port 8765 --allowed-groups 10001
+```
+
 ## 后台
 
 默认账号来自 `.env`：
