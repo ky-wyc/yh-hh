@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import httpx
 
 from app.events import normalize_group_message
@@ -75,6 +77,9 @@ async def test_ai_success_uses_openai_compatible_endpoint(settings, repo, messag
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/v1/chat/completions"
         assert request.headers["authorization"] == "Bearer test-key"
+        payload = json.loads((await request.aread()).decode("utf-8"))
+        assert "tester: /ai hello" in payload["messages"][1]["content"]
+        assert "当前问题：hello" in payload["messages"][1]["content"]
         return httpx.Response(
             200,
             json={

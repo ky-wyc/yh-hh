@@ -60,9 +60,15 @@ class MessageRouter:
             await repo.mark_message(message_log, "dropped", f"rate_limited:{exc}")
             return RouteOutcome(status="dropped", reason="rate_limited")
 
+        await self.rate_limiter.append_context(
+            event.group_id,
+            f"{event.nickname or event.user_id}: {event.text}",
+        )
+
         command = self._parse_command(event.text)
         if command:
             name, args = command
+            recent_context = await self.rate_limiter.get_context(event.group_id)
             result = await self.skills.dispatch(
                 name,
                 args,
@@ -72,6 +78,7 @@ class MessageRouter:
                     group_id=event.group_id,
                     user_id=event.user_id,
                     message_id=event.message_id,
+                    recent_context=recent_context,
                 ),
             )
             await sender.send_group_message(event.group_id, result.text)
@@ -113,9 +120,11 @@ class MessageRouter:
 
         if event.at_bot and group.reply_mode in {"mention_only", "active"}:
             prompt = remove_bot_mentions(event.text, self.settings) or event.text
+            context = await self.rate_limiter.get_context(event.group_id)
+            prompt_with_context = self._with_context(prompt, context)
             llm_result = await self.llm.chat(
                 repo,
-                prompt,
+                prompt_with_context,
                 group_id=event.group_id,
                 user_id=event.user_id,
                 skill_name="mention_chat",
@@ -150,3 +159,8 @@ class MessageRouter:
         name, _, args = payload.partition(" ")
         return name.lower(), args.strip()
 
+    @staticmethod
+    def _with_context(prompt: str, context: list[str]) -> str:
+        if not context:
+            return prompt
+        return "最近群聊上下文：\n" + "\n".join(context[-10:]) + f"\n\n当前问题：{prompt}"

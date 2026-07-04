@@ -35,7 +35,7 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-OneBot 容器默认使用 `ghcr.io/lagrangedev/lagrange.onebot:edge`，需要按 Lagrange.OneBot 的配置方式挂载登录态和反向 WebSocket 配置，使其连接：
+OneBot 容器默认使用 `ghcr.io/lagrangedev/lagrange.onebot:edge`。可以参考 `deploy/lagrange/appsettings.example.json` 配置反向 WebSocket，使其连接：
 
 ```text
 ws://bot-app:8000/onebot/ws
@@ -58,4 +58,3 @@ API Key 不会在后台接口明文返回，只返回 `api_key_configured`。
 - `docs/MVP规格.md`
 - `docs/一期产品蓝图.md`
 - `docs/二期能力池.md`
-

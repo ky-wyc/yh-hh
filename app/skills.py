@@ -15,6 +15,7 @@ class SkillContext:
     group_id: str
     user_id: str
     message_id: str = ""
+    recent_context: list[str] | None = None
 
 
 @dataclass(slots=True)
@@ -65,9 +66,12 @@ class SkillRegistry:
     async def ai(self, args: str, ctx: SkillContext) -> SkillResult:
         if not args.strip():
             return SkillResult(text="用法：/ai 你的问题", skill_name="ai")
+        prompt = args.strip()
+        if ctx.recent_context:
+            prompt = "最近群聊上下文：\n" + "\n".join(ctx.recent_context[-10:]) + f"\n\n当前问题：{prompt}"
         result = await ctx.llm.chat(
             ctx.repo,
-            args.strip(),
+            prompt,
             group_id=ctx.group_id,
             user_id=ctx.user_id,
             skill_name="ai",
@@ -149,4 +153,3 @@ class SkillRegistry:
             )
             return SkillResult(text=f"已删除 {count} 条关键词规则。", skill_name="admin-lite")
         return SkillResult(text="用法：/banword add/remove/list", skill_name="admin-lite")
-

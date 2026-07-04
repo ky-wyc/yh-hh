@@ -180,3 +180,25 @@ async def errors(request: Request, session: AsyncSession = Depends(get_session))
         for item in messages
     ]
 
+
+@router.get("/usage/llm", dependencies=[Depends(require_admin)])
+async def llm_usage(request: Request, session: AsyncSession = Depends(get_session)):
+    repo = repo_from(request, session)
+    records = await repo.recent_llm_usage()
+    return [
+        {
+            "id": item.id,
+            "group_id": item.group_id,
+            "user_id": item.user_id,
+            "skill_name": item.skill_name,
+            "provider": item.provider,
+            "model": item.model,
+            "prompt_tokens": item.prompt_tokens,
+            "completion_tokens": item.completion_tokens,
+            "latency_ms": item.latency_ms,
+            "status": item.status,
+            "error_message": item.error_message,
+            "created_at": item.created_at.isoformat(),
+        }
+        for item in records
+    ]
