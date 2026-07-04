@@ -44,6 +44,7 @@ python scripts/check_all.py --pnpm pnpm --with-smoke
 
 ```bash
 cp .env.production.example .env
+python scripts/preflight_check.py --env-file .env
 docker compose up -d --build
 ```
 

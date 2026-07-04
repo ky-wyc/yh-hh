@@ -12,6 +12,18 @@
 - 已按实际模型服务配置 `LLM_BASE_URL`、`LLM_API_KEY`、`LLM_MODEL`。
 - 已准备 Lagrange.OneBot 配置和登录态目录 `data/onebot`。
 
+执行生产配置自检：
+
+```bash
+python scripts/preflight_check.py --env-file .env
+```
+
+正式上线前建议使用严格模式：
+
+```bash
+python scripts/preflight_check.py --env-file .env --strict
+```
+
 ## 2. 启动服务
 
 ```bash
@@ -188,4 +200,3 @@ ls data/backups
 - 后台可登录、配置模型、查看群开关和日志。
 - PostgreSQL 数据持久化，重启后配置不丢失。
 - OneBot 登录恢复流程和常见故障处理文档已确认。
-
