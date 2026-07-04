@@ -12,6 +12,12 @@
 - 已按实际模型服务配置 `LLM_BASE_URL`、`LLM_API_KEY`、`LLM_MODEL`。
 - 已准备 Lagrange.OneBot 配置和登录态目录 `data/onebot`。
 
+生成 Lagrange.OneBot 配置：
+
+```bash
+python scripts/prepare_lagrange_config.py --env-file .env
+```
+
 执行生产配置自检：
 
 ```bash

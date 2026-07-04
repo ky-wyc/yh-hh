@@ -12,6 +12,7 @@ if [ ! -f "$ENV_FILE" ]; then
 fi
 
 python scripts/preflight_check.py --env-file "$ENV_FILE"
+python scripts/prepare_lagrange_config.py --env-file "$ENV_FILE"
 
 docker compose up -d --build
 
@@ -43,4 +44,3 @@ python scripts/smoke_check.py \
   --password "$ADMIN_PASSWORD"
 
 echo "MVP deployment smoke check passed."
-
