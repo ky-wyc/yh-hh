@@ -1,0 +1,10 @@
+.git
+.env
+.pytest_cache
+.ruff_cache
+__pycache__
+*.pyc
+data
+web-admin/node_modules
+web-admin/dist
+
