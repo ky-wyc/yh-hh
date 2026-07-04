@@ -317,6 +317,10 @@ class Repository:
         )
         return list(result.scalars().all())
 
+    async def recent_audit_logs(self, limit: int = 50) -> list[AuditLog]:
+        result = await self.session.execute(select(AuditLog).order_by(AuditLog.id.desc()).limit(limit))
+        return list(result.scalars().all())
+
     async def overview(self) -> dict[str, Any]:
         messages = await self.session.scalar(select(func.count(MessageLog.id)))
         replies = await self.session.scalar(select(func.count(BotReply.id)))

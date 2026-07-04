@@ -231,3 +231,24 @@ async def llm_usage(request: Request, session: AsyncSession = Depends(get_sessio
         }
         for item in records
     ]
+
+
+@router.get("/audit-logs", dependencies=[Depends(require_admin)])
+async def audit_logs(request: Request, session: AsyncSession = Depends(get_session)):
+    repo = repo_from(request, session)
+    records = await repo.recent_audit_logs()
+    return [
+        {
+            "id": item.id,
+            "actor_user_id": item.actor_user_id,
+            "actor_role": item.actor_role,
+            "group_id": item.group_id,
+            "action": item.action,
+            "target_type": item.target_type,
+            "target_id": item.target_id,
+            "detail_json": item.detail_json,
+            "result": item.result,
+            "created_at": item.created_at.isoformat(),
+        }
+        for item in records
+    ]
