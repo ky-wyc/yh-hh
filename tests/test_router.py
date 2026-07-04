@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import httpx
+
 from app.events import normalize_group_message
+from app.llm import LLMService
 from app.models import User
+from app.router import MessageRouter
 
 
 def group_event(text: str, *, group_id: str = "10001", user_id: str = "20001", message_id: int = 1):
@@ -36,6 +40,17 @@ async def test_group_whitelist_drops_message(settings, repo, message_router, sen
     assert sender.group_messages == []
 
 
+async def test_disabled_group_does_not_reply(settings, repo, message_router, sender):
+    await repo.update_group("10001", enabled=False)
+    event = normalize_group_message(group_event("/ping", message_id=11), settings)
+
+    outcome = await message_router.handle(event, repo, sender)
+
+    assert outcome.replied is False
+    assert outcome.reason == "group_disabled"
+    assert sender.group_messages == []
+
+
 async def test_duplicate_event_does_not_reply_twice(settings, repo, message_router, sender):
     event = normalize_group_message(group_event("/ping", message_id=10), settings)
 
@@ -54,6 +69,37 @@ async def test_ai_without_api_key_has_clear_error(settings, repo, message_router
 
     assert outcome.replied is True
     assert "API Key" in sender.group_messages[0][1]
+
+
+async def test_ai_success_uses_openai_compatible_endpoint(settings, repo, message_router, sender):
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/chat/completions"
+        assert request.headers["authorization"] == "Bearer test-key"
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": "hello from model"}}],
+                "usage": {"prompt_tokens": 5, "completion_tokens": 3},
+            },
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://llm.test")
+    llm = LLMService(client)
+    router = MessageRouter(settings, llm, message_router.rate_limiter)
+    await repo.update_llm_config(
+        {
+            "base_url": "https://llm.test/v1",
+            "api_key": "test-key",
+            "model": "test-model",
+        }
+    )
+    event = normalize_group_message(group_event("/ai hello", message_id=12), settings)
+
+    outcome = await router.handle(event, repo, sender)
+
+    await client.aclose()
+    assert outcome.replied is True
+    assert sender.group_messages == [("10001", "hello from model")]
 
 
 async def test_dice_does_not_call_llm(settings, repo, message_router, sender):
@@ -89,4 +135,3 @@ async def test_admin_can_add_keyword_and_keyword_hit_replies(settings, repo, mes
     assert add.replied is True
     assert hit.replied is True
     assert sender.group_messages[-1] == ("10001", "请不要发广告")
-
