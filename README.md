@@ -31,7 +31,7 @@ uvicorn app.main:create_app --factory --reload
 ## Docker Compose
 
 ```bash
-cp .env.example .env
+cp .env.production.example .env
 docker compose up -d --build
 ```
 
@@ -78,5 +78,6 @@ API Key 不会在后台接口明文返回，只返回 `api_key_configured`。
 
 - `docs/QQ机器人系统设计方案.md`
 - `docs/MVP规格.md`
+- `docs/MVP验收清单.md`
 - `docs/一期产品蓝图.md`
 - `docs/二期能力池.md`

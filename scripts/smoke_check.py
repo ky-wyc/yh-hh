@@ -19,6 +19,10 @@ def main() -> int:
         health.raise_for_status()
         print("health:", health.json())
 
+        ready = client.get(f"{base_url}/api/system/ready")
+        ready.raise_for_status()
+        print("ready:", ready.json())
+
         login = client.post(
             f"{base_url}/api/auth/login",
             json={"username": args.username, "password": args.password},
@@ -45,4 +49,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-

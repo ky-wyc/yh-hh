@@ -19,6 +19,10 @@ def test_admin_login_and_health(tmp_path):
         health = client.get("/api/system/health")
         assert health.status_code == 200
 
+        ready = client.get("/api/system/ready")
+        assert ready.status_code == 200
+        assert ready.json()["database"] == "ok"
+
         denied = client.get("/api/auth/me")
         assert denied.status_code == 401
 

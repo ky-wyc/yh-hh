@@ -22,6 +22,9 @@ class BotCache(Protocol):
     async def get_context(self, group_id: str, limit: int = 10) -> list[str]:
         ...
 
+    async def health(self) -> dict[str, str]:
+        ...
+
 
 @dataclass(slots=True)
 class MemoryRateLimiter:
@@ -47,6 +50,9 @@ class MemoryRateLimiter:
         context = self.contexts[group_id]
         return list(context)[-limit:]
 
+    async def health(self) -> dict[str, str]:
+        return {"backend": "memory", "status": "ok"}
+
 
 class RedisRateLimiter:
     def __init__(self, redis: Redis):
@@ -69,6 +75,10 @@ class RedisRateLimiter:
         key = f"context:{group_id}"
         values = await self.redis.lrange(key, -limit, -1)
         return [str(value) for value in values]
+
+    async def health(self) -> dict[str, str]:
+        await self.redis.ping()
+        return {"backend": "redis", "status": "ok"}
 
 
 async def create_rate_limiter(redis_url: str):

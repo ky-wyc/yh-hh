@@ -8,18 +8,27 @@ services:
       REDIS_URL: redis://redis:6379/0
       ONEBOT_REVERSE_WS_URL: ws://bot-app:8000/onebot/ws
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     ports:
       - "8000:8000"
     volumes:
       - ./data/app:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/system/ready', timeout=5).read()"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
 
   onebot:
     image: ${ONEBOT_IMAGE:-ghcr.io/lagrangedev/lagrange.onebot:edge}
     restart: always
     depends_on:
-      - bot-app
+      bot-app:
+        condition: service_healthy
     volumes:
       - ./data/onebot:/app/data
     environment:
@@ -36,17 +45,36 @@ services:
       - ./data/postgres:/var/lib/postgresql/data
     ports:
       - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-qqbot} -d $${POSTGRES_DB:-qqbot}"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
 
   redis:
     image: redis:7
     restart: always
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
 
   web-admin:
     build: ./web-admin
     restart: always
     depends_on:
-      - bot-app
+      bot-app:
+        condition: service_healthy
     ports:
       - "8080:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 10s

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import login, require_admin
@@ -45,6 +46,13 @@ async def auth_me() -> dict[str, str]:
 @router.get("/system/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@router.get("/system/ready")
+async def ready(request: Request, session: AsyncSession = Depends(get_session)):
+    await session.execute(text("select 1"))
+    cache_status = await request.app.state.rate_limiter.health()
+    return {"status": "ok", "database": "ok", "cache": cache_status}
 
 
 @router.get("/system/onebot-status", dependencies=[Depends(require_admin)])
