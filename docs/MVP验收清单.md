@@ -31,6 +31,12 @@ docker compose up -d --build
 docker compose ps
 ```
 
+也可以使用部署脚本完成配置自检、启动和 Bot Core 冒烟检查：
+
+```bash
+sh scripts/deploy_mvp.sh
+```
+
 预期：
 
 - `postgres` 为 healthy。

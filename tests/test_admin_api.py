@@ -108,3 +108,29 @@ def test_onebot_reverse_ws_receives_group_message_and_sends_action(tmp_path):
         assert action["action"] == "send_group_msg"
         assert action["params"]["group_id"] == 10001
         assert action["params"]["message"] == "pong"
+
+
+def test_onebot_reverse_ws_accepts_access_token_query(tmp_path):
+    settings = Settings(
+        DATABASE_URL=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",
+        REDIS_URL="",
+        ALLOWED_GROUPS="10001",
+        ONEBOT_ACCESS_TOKEN="secret-token",
+    )
+    app = create_app(settings)
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/onebot/ws?access_token=secret-token") as websocket:
+            websocket.send_json(
+                {
+                    "post_type": "message",
+                    "message_type": "group",
+                    "message_id": 1,
+                    "group_id": 10001,
+                    "user_id": 20001,
+                    "message": "/ping",
+                }
+            )
+            action = websocket.receive_json()
+
+        assert action["params"]["message"] == "pong"

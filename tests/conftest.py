@@ -34,9 +34,12 @@ async def session_factory(settings: Settings):
 
 @pytest.fixture
 async def repo(session_factory: async_sessionmaker, settings: Settings):
-    async with session_factory() as session:
+    session = session_factory()
+    try:
         yield Repository(session, settings)
         await session.commit()
+    finally:
+        await session.close()
 
 
 @pytest.fixture

@@ -58,7 +58,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.websocket(settings.onebot_reverse_ws_path)
     async def onebot_ws(websocket: WebSocket) -> None:
         if settings.onebot_access_token:
-            token = websocket.headers.get("authorization", "").replace("Bearer ", "")
+            auth_header = websocket.headers.get("authorization", "")
+            token = auth_header.removeprefix("Bearer ").strip()
+            token = token or websocket.headers.get("x-access-token", "").strip()
+            token = token or websocket.query_params.get("access_token", "").strip()
             if token != settings.onebot_access_token:
                 await websocket.close(code=1008)
                 return

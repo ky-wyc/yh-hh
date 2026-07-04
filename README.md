@@ -48,6 +48,12 @@ python scripts/preflight_check.py --env-file .env
 docker compose up -d --build
 ```
 
+Linux 服务器上也可以使用部署脚本完成 preflight、启动和 smoke：
+
+```bash
+sh scripts/deploy_mvp.sh
+```
+
 OneBot 容器默认使用 `ghcr.io/lagrangedev/lagrange.onebot:edge`。可以参考 `deploy/lagrange/appsettings.example.json` 配置反向 WebSocket，使其连接：
 
 ```text
