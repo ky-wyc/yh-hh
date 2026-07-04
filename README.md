@@ -41,6 +41,22 @@ OneBot 容器默认使用 `ghcr.io/lagrangedev/lagrange.onebot:edge`。可以参
 ws://bot-app:8000/onebot/ws
 ```
 
+## MVP Smoke Check
+
+服务启动后可以先跑 HTTP 检查：
+
+```bash
+python scripts/smoke_check.py --base-url http://127.0.0.1:8000 --username admin --password change-me
+```
+
+再用模拟 OneBot 连接验证反向 WebSocket：
+
+```bash
+python scripts/onebot_simulate.py --ws-url ws://127.0.0.1:8000/onebot/ws --group-id 10001
+```
+
+如果配置了 `ALLOWED_GROUPS`，模拟脚本的 `--group-id` 必须在白名单里。
+
 ## 后台
 
 默认账号来自 `.env`：
