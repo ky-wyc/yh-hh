@@ -1,0 +1,52 @@
+services:
+  bot-app:
+    build: .
+    restart: always
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-qqbot}:${POSTGRES_PASSWORD:-qqbot}@postgres:5432/${POSTGRES_DB:-qqbot}
+      REDIS_URL: redis://redis:6379/0
+      ONEBOT_REVERSE_WS_URL: ws://bot-app:8000/onebot/ws
+    depends_on:
+      - postgres
+      - redis
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data/app:/app/data
+
+  onebot:
+    image: ${ONEBOT_IMAGE:-ghcr.io/lagrangedev/lagrange.onebot:edge}
+    restart: always
+    depends_on:
+      - bot-app
+    volumes:
+      - ./data/onebot:/app/data
+    environment:
+      BOT_CORE_REVERSE_WS_URL: ws://bot-app:8000/onebot/ws
+
+  postgres:
+    image: postgres:16
+    restart: always
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-qqbot}
+      POSTGRES_USER: ${POSTGRES_USER:-qqbot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-qqbot}
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7
+    restart: always
+    ports:
+      - "6379:6379"
+
+  web-admin:
+    build: ./web-admin
+    restart: always
+    depends_on:
+      - bot-app
+    ports:
+      - "8080:80"

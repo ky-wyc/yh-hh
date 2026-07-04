@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+.env
+data/
+
+web-admin/node_modules/
+web-admin/dist/
+web-admin/.vite/
+
+*.log

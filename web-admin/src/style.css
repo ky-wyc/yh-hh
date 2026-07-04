@@ -1,0 +1,39 @@
+body {
+  margin: 0;
+  background: #f6f8fb;
+  color: #0f172a;
+  font-family: Inter, "Microsoft YaHei", system-ui, sans-serif;
+}
+
+.layout {
+  min-height: 100vh;
+}
+
+.sidebar {
+  background: #0f172a;
+}
+
+.brand {
+  color: #fff;
+  font-size: 18px;
+  font-weight: 700;
+  padding: 20px;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  background: #fff;
+  border-bottom: 1px solid #e2e8f0;
+  font-weight: 600;
+}
+
+.page-title {
+  margin: 0 0 18px;
+  font-size: 22px;
+}
+
+.toolbar {
+  margin-bottom: 16px;
+}
+

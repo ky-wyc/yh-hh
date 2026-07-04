@@ -1,0 +1,152 @@
+from __future__ import annotations
+
+import random
+import re
+from dataclasses import dataclass
+
+from app.llm import LLMService
+from app.repository import Repository
+
+
+@dataclass(slots=True)
+class SkillContext:
+    repo: Repository
+    llm: LLMService
+    group_id: str
+    user_id: str
+    message_id: str = ""
+
+
+@dataclass(slots=True)
+class SkillResult:
+    text: str
+    skill_name: str
+    llm_model: str = ""
+
+
+class SkillRegistry:
+    def __init__(self):
+        self._handlers = {
+            "help": self.help,
+            "ping": self.ping,
+            "ai": self.ai,
+            "dice": self.dice,
+            "warn": self.warn,
+            "banword": self.banword,
+        }
+
+    @property
+    def names(self) -> list[str]:
+        return sorted(self._handlers)
+
+    async def dispatch(self, name: str, args: str, ctx: SkillContext) -> SkillResult:
+        handler = self._handlers.get(name)
+        if handler is None:
+            return SkillResult(text=f"未知命令：/{name}。发送 /help 查看可用命令。", skill_name="unknown")
+        return await handler(args, ctx)
+
+    async def help(self, args: str, ctx: SkillContext) -> SkillResult:
+        text = "\n".join(
+            [
+                "可用命令：",
+                "/help - 查看帮助",
+                "/ping - 健康检查",
+                "/ai 问题 - 向大模型提问",
+                "/dice 或 /dice 2d6 - 掷骰子",
+                "/warn @用户 原因 - 管理员警告",
+                "/banword add/remove/list - 关键词拦截",
+            ]
+        )
+        return SkillResult(text=text, skill_name="help")
+
+    async def ping(self, args: str, ctx: SkillContext) -> SkillResult:
+        return SkillResult(text="pong", skill_name="ping")
+
+    async def ai(self, args: str, ctx: SkillContext) -> SkillResult:
+        if not args.strip():
+            return SkillResult(text="用法：/ai 你的问题", skill_name="ai")
+        result = await ctx.llm.chat(
+            ctx.repo,
+            args.strip(),
+            group_id=ctx.group_id,
+            user_id=ctx.user_id,
+            skill_name="ai",
+        )
+        return SkillResult(text=result.text, skill_name="ai", llm_model=result.model)
+
+    async def dice(self, args: str, ctx: SkillContext) -> SkillResult:
+        spec = args.strip().lower() or "1d6"
+        match = re.fullmatch(r"(\d{1,2})d(\d{1,4})", spec)
+        if not match:
+            return SkillResult(text="用法：/dice 或 /dice 2d6", skill_name="dice")
+        count = min(max(int(match.group(1)), 1), 20)
+        sides = min(max(int(match.group(2)), 2), 1000)
+        rolls = [random.randint(1, sides) for _ in range(count)]
+        return SkillResult(text=f"{count}d{sides}: {rolls}，总和 {sum(rolls)}", skill_name="dice")
+
+    async def warn(self, args: str, ctx: SkillContext) -> SkillResult:
+        user = await ctx.repo.ensure_user(ctx.user_id)
+        if user.role not in {"super_admin", "group_admin"}:
+            return SkillResult(text="权限不足：只有管理员可以执行警告。", skill_name="admin-lite")
+        if not args.strip():
+            return SkillResult(text="用法：/warn @用户 原因", skill_name="admin-lite")
+        await ctx.repo.audit(
+            action="warn",
+            actor_user_id=ctx.user_id,
+            actor_role=user.role,
+            group_id=ctx.group_id,
+            detail={"args": args.strip()},
+        )
+        return SkillResult(text=f"已记录警告：{args.strip()}", skill_name="admin-lite")
+
+    async def banword(self, args: str, ctx: SkillContext) -> SkillResult:
+        user = await ctx.repo.ensure_user(ctx.user_id)
+        if user.role not in {"super_admin", "group_admin"}:
+            return SkillResult(text="权限不足：只有管理员可以管理关键词。", skill_name="admin-lite")
+
+        parts = args.split(maxsplit=2)
+        if not parts:
+            return SkillResult(text="用法：/banword add 关键词 [回复]，/banword remove 关键词，/banword list", skill_name="admin-lite")
+
+        action = parts[0].lower()
+        if action == "list":
+            rules = await ctx.repo.list_keyword_rules(ctx.group_id)
+            if not rules:
+                return SkillResult(text="当前没有启用的关键词规则。", skill_name="admin-lite")
+            return SkillResult(
+                text="关键词规则：\n" + "\n".join(f"- {rule.keyword}" for rule in rules),
+                skill_name="admin-lite",
+            )
+        if len(parts) < 2:
+            return SkillResult(text="请提供关键词。", skill_name="admin-lite")
+        keyword = parts[1].strip()
+        if action == "add":
+            response = parts[2].strip() if len(parts) >= 3 else "命中关键词，已记录。"
+            await ctx.repo.add_keyword_rule(
+                group_id=ctx.group_id,
+                keyword=keyword,
+                response=response,
+                created_by=ctx.user_id,
+            )
+            await ctx.repo.audit(
+                action="banword_add",
+                actor_user_id=ctx.user_id,
+                actor_role=user.role,
+                group_id=ctx.group_id,
+                target_type="keyword",
+                target_id=keyword,
+            )
+            return SkillResult(text=f"已添加关键词：{keyword}", skill_name="admin-lite")
+        if action == "remove":
+            count = await ctx.repo.delete_keyword_rule(group_id=ctx.group_id, keyword=keyword)
+            await ctx.repo.audit(
+                action="banword_remove",
+                actor_user_id=ctx.user_id,
+                actor_role=user.role,
+                group_id=ctx.group_id,
+                target_type="keyword",
+                target_id=keyword,
+            )
+            return SkillResult(text=f"已删除 {count} 条关键词规则。", skill_name="admin-lite")
+        return SkillResult(text="用法：/banword add/remove/list", skill_name="admin-lite")
+

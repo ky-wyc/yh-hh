@@ -1,0 +1,292 @@
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from typing import Any
+
+from sqlalchemy import delete, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.config import Settings
+from app.models import AuditLog, BotReply, Group, KeywordRule, LLMUsageLog, MessageLog, Setting, User
+
+
+@dataclass(slots=True)
+class LLMConfig:
+    provider: str
+    base_url: str
+    api_key: str
+    model: str
+    temperature: float
+    max_tokens: int
+    timeout_seconds: float
+
+
+class Repository:
+    def __init__(self, session: AsyncSession, settings: Settings):
+        self.session = session
+        self.settings = settings
+
+    async def ensure_user(self, qq_id: str, nickname: str = "") -> User:
+        result = await self.session.execute(select(User).where(User.qq_id == qq_id))
+        user = result.scalar_one_or_none()
+        if user:
+            if nickname and user.nickname != nickname:
+                user.nickname = nickname
+            if qq_id in self.settings.admin_qq_ids and user.role == "normal_user":
+                user.role = "super_admin"
+            return user
+        role = "super_admin" if qq_id in self.settings.admin_qq_ids else "normal_user"
+        user = User(qq_id=qq_id, nickname=nickname, role=role)
+        self.session.add(user)
+        await self.session.flush()
+        return user
+
+    async def ensure_group(self, qq_group_id: str, name: str = "") -> Group:
+        result = await self.session.execute(select(Group).where(Group.qq_group_id == qq_group_id))
+        group = result.scalar_one_or_none()
+        if group:
+            if name and group.name != name:
+                group.name = name
+            return group
+        group = Group(
+            qq_group_id=qq_group_id,
+            name=name,
+            enabled=self.settings.default_group_enabled,
+            reply_mode=self.settings.default_reply_mode,
+        )
+        self.session.add(group)
+        await self.session.flush()
+        return group
+
+    async def get_groups(self) -> list[Group]:
+        result = await self.session.execute(select(Group).order_by(Group.qq_group_id))
+        return list(result.scalars().all())
+
+    async def update_group(self, qq_group_id: str, **changes: Any) -> Group:
+        group = await self.ensure_group(qq_group_id)
+        for key, value in changes.items():
+            if value is not None and hasattr(group, key):
+                setattr(group, key, value)
+        await self.session.flush()
+        return group
+
+    async def save_message(
+        self,
+        *,
+        group_id: str,
+        user_id: str,
+        message_id: str,
+        dedup_key: str,
+        content: str,
+        raw_event: dict[str, Any],
+        status: str = "received",
+        drop_reason: str = "",
+    ) -> tuple[MessageLog | None, bool]:
+        result = await self.session.execute(select(MessageLog).where(MessageLog.dedup_key == dedup_key))
+        if result.scalar_one_or_none() is not None:
+            return None, True
+
+        log = MessageLog(
+            group_id=group_id,
+            user_id=user_id,
+            message_id=message_id,
+            dedup_key=dedup_key,
+            content=content,
+            raw_event_json=json.dumps(raw_event, ensure_ascii=False),
+            status=status,
+            drop_reason=drop_reason,
+        )
+        self.session.add(log)
+        await self.session.flush()
+        return log, False
+
+    async def mark_message(self, message_log: MessageLog | None, status: str, reason: str = "") -> None:
+        if message_log is None:
+            return
+        message_log.status = status
+        message_log.drop_reason = reason
+        await self.session.flush()
+
+    async def save_reply(
+        self,
+        *,
+        group_id: str,
+        user_id: str,
+        trigger_type: str,
+        content: str,
+        skill_name: str,
+        input_message_id: str = "",
+        llm_model: str = "",
+    ) -> BotReply:
+        reply = BotReply(
+            group_id=group_id,
+            user_id=user_id,
+            trigger_type=trigger_type,
+            content=content,
+            skill_name=skill_name,
+            input_message_id=input_message_id,
+            llm_model=llm_model,
+        )
+        self.session.add(reply)
+        await self.session.flush()
+        return reply
+
+    async def get_setting(self, key: str) -> str | None:
+        result = await self.session.execute(select(Setting).where(Setting.key == key))
+        setting = result.scalar_one_or_none()
+        return setting.value if setting else None
+
+    async def set_setting(self, key: str, value: str) -> None:
+        result = await self.session.execute(select(Setting).where(Setting.key == key))
+        setting = result.scalar_one_or_none()
+        if setting is None:
+            self.session.add(Setting(key=key, value=value))
+        else:
+            setting.value = value
+        await self.session.flush()
+
+    async def get_llm_config(self) -> LLMConfig:
+        async def val(key: str, default: str) -> str:
+            return await self.get_setting(key) or default
+
+        return LLMConfig(
+            provider=await val("llm_provider", self.settings.llm_provider),
+            base_url=await val("llm_base_url", self.settings.llm_base_url),
+            api_key=await val("llm_api_key", self.settings.llm_api_key),
+            model=await val("llm_model", self.settings.llm_model),
+            temperature=float(await val("llm_temperature", str(self.settings.llm_temperature))),
+            max_tokens=int(await val("llm_max_tokens", str(self.settings.llm_max_tokens))),
+            timeout_seconds=float(
+                await val("llm_timeout_seconds", str(self.settings.llm_timeout_seconds))
+            ),
+        )
+
+    async def update_llm_config(self, changes: dict[str, Any]) -> None:
+        key_map = {
+            "provider": "llm_provider",
+            "base_url": "llm_base_url",
+            "api_key": "llm_api_key",
+            "model": "llm_model",
+            "temperature": "llm_temperature",
+            "max_tokens": "llm_max_tokens",
+            "timeout_seconds": "llm_timeout_seconds",
+        }
+        for field, value in changes.items():
+            if value is not None and field in key_map:
+                await self.set_setting(key_map[field], str(value))
+
+    async def add_keyword_rule(
+        self, *, group_id: str, keyword: str, response: str, created_by: str
+    ) -> KeywordRule:
+        rule = KeywordRule(
+            group_id=group_id,
+            keyword=keyword,
+            response=response,
+            created_by=created_by,
+        )
+        self.session.add(rule)
+        await self.session.flush()
+        return rule
+
+    async def delete_keyword_rule(self, *, group_id: str, keyword: str) -> int:
+        result = await self.session.execute(
+            delete(KeywordRule).where(KeywordRule.group_id == group_id, KeywordRule.keyword == keyword)
+        )
+        await self.session.flush()
+        return result.rowcount or 0
+
+    async def list_keyword_rules(self, group_id: str) -> list[KeywordRule]:
+        result = await self.session.execute(
+            select(KeywordRule).where(
+                KeywordRule.enabled.is_(True),
+                (KeywordRule.group_id == group_id) | (KeywordRule.group_id == ""),
+            )
+        )
+        return list(result.scalars().all())
+
+    async def find_keyword_hit(self, group_id: str, content: str) -> KeywordRule | None:
+        for rule in await self.list_keyword_rules(group_id):
+            if rule.keyword and rule.keyword in content:
+                return rule
+        return None
+
+    async def audit(
+        self,
+        *,
+        action: str,
+        actor_user_id: str = "",
+        actor_role: str = "",
+        group_id: str = "",
+        target_type: str = "",
+        target_id: str = "",
+        detail: dict[str, Any] | None = None,
+        result: str = "success",
+    ) -> None:
+        self.session.add(
+            AuditLog(
+                action=action,
+                actor_user_id=actor_user_id,
+                actor_role=actor_role,
+                group_id=group_id,
+                target_type=target_type,
+                target_id=target_id,
+                detail_json=json.dumps(detail or {}, ensure_ascii=False),
+                result=result,
+            )
+        )
+        await self.session.flush()
+
+    async def save_llm_usage(
+        self,
+        *,
+        config: LLMConfig,
+        group_id: str = "",
+        user_id: str = "",
+        skill_name: str = "",
+        prompt_tokens: int = 0,
+        completion_tokens: int = 0,
+        latency_ms: int = 0,
+        status: str = "success",
+        error_message: str = "",
+    ) -> None:
+        self.session.add(
+            LLMUsageLog(
+                group_id=group_id,
+                user_id=user_id,
+                skill_name=skill_name,
+                provider=config.provider,
+                model=config.model,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                latency_ms=latency_ms,
+                status=status,
+                error_message=error_message[:1000],
+            )
+        )
+        await self.session.flush()
+
+    async def recent_messages(self, limit: int = 50) -> list[MessageLog]:
+        result = await self.session.execute(select(MessageLog).order_by(MessageLog.id.desc()).limit(limit))
+        return list(result.scalars().all())
+
+    async def recent_errors(self, limit: int = 50) -> list[MessageLog]:
+        result = await self.session.execute(
+            select(MessageLog)
+            .where(MessageLog.status.in_(["dropped", "error"]))
+            .order_by(MessageLog.id.desc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
+    async def overview(self) -> dict[str, Any]:
+        messages = await self.session.scalar(select(func.count(MessageLog.id)))
+        replies = await self.session.scalar(select(func.count(BotReply.id)))
+        groups = await self.session.scalar(select(func.count(Group.id)).where(Group.enabled.is_(True)))
+        llm_calls = await self.session.scalar(select(func.count(LLMUsageLog.id)))
+        return {
+            "messages": messages or 0,
+            "replies": replies or 0,
+            "enabled_groups": groups or 0,
+            "llm_calls": llm_calls or 0,
+        }
