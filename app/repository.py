@@ -22,6 +22,13 @@ class LLMConfig:
     timeout_seconds: float
 
 
+@dataclass(slots=True)
+class BotConfig:
+    default_group_enabled: bool
+    default_reply_mode: str
+    command_prefix: str
+
+
 class Repository:
     def __init__(self, session: AsyncSession, settings: Settings):
         self.session = session
@@ -49,11 +56,12 @@ class Repository:
             if name and group.name != name:
                 group.name = name
             return group
+        bot_settings = await self.get_bot_settings()
         group = Group(
             qq_group_id=qq_group_id,
             name=name,
-            enabled=self.settings.default_group_enabled,
-            reply_mode=self.settings.default_reply_mode,
+            enabled=bot_settings.default_group_enabled,
+            reply_mode=bot_settings.default_reply_mode,
         )
         self.session.add(group)
         await self.session.flush()
@@ -171,6 +179,30 @@ class Repository:
             "temperature": "llm_temperature",
             "max_tokens": "llm_max_tokens",
             "timeout_seconds": "llm_timeout_seconds",
+        }
+        for field, value in changes.items():
+            if value is not None and field in key_map:
+                await self.set_setting(key_map[field], str(value))
+
+    async def get_bot_settings(self) -> BotConfig:
+        default_group_enabled = await self.get_setting("default_group_enabled")
+        default_reply_mode = await self.get_setting("default_reply_mode")
+        command_prefix = await self.get_setting("command_prefix")
+        return BotConfig(
+            default_group_enabled=(
+                self.settings.default_group_enabled
+                if default_group_enabled is None
+                else default_group_enabled.lower() == "true"
+            ),
+            default_reply_mode=default_reply_mode or self.settings.default_reply_mode,
+            command_prefix=command_prefix or self.settings.command_prefix,
+        )
+
+    async def update_bot_settings(self, changes: dict[str, Any]) -> None:
+        key_map = {
+            "default_group_enabled": "default_group_enabled",
+            "default_reply_mode": "default_reply_mode",
+            "command_prefix": "command_prefix",
         }
         for field, value in changes.items():
             if value is not None and field in key_map:

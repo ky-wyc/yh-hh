@@ -7,6 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import login, require_admin
 from app.repository import Repository
 from app.schemas import (
+    BotSettingsOut,
+    BotSettingsUpdate,
     GroupUpdate,
     LLMSettingsOut,
     LLMSettingsUpdate,
@@ -112,6 +114,25 @@ async def patch_group(
         "enabled": group.enabled,
         "reply_mode": group.reply_mode,
     }
+
+
+@router.get("/settings/bot", response_model=BotSettingsOut, dependencies=[Depends(require_admin)])
+async def get_bot_settings(request: Request, session: AsyncSession = Depends(get_session)):
+    repo = repo_from(request, session)
+    return await repo.get_bot_settings()
+
+
+@router.patch("/settings/bot", response_model=BotSettingsOut, dependencies=[Depends(require_admin)])
+async def update_bot_settings(
+    payload: BotSettingsUpdate,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    repo = repo_from(request, session)
+    await repo.update_bot_settings(payload.model_dump(exclude_unset=True))
+    await repo.audit(action="bot_settings_update", target_type="settings", target_id="bot")
+    await session.commit()
+    return await repo.get_bot_settings()
 
 
 @router.get("/settings/llm", response_model=LLMSettingsOut, dependencies=[Depends(require_admin)])

@@ -83,6 +83,31 @@ def test_llm_usage_log_is_queryable(tmp_path):
         assert usage.json()[0]["status"] == "missing_api_key"
 
 
+def test_bot_settings_can_update_default_reply_mode(tmp_path):
+    settings = Settings(
+        DATABASE_URL=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",
+        REDIS_URL="",
+        ADMIN_USERNAME="admin",
+        ADMIN_PASSWORD="secret",
+    )
+    app = create_app(settings)
+
+    with TestClient(app) as client:
+        token = client.post(
+            "/api/auth/login", json={"username": "admin", "password": "secret"}
+        ).json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        response = client.patch(
+            "/api/settings/bot",
+            json={"default_reply_mode": "command_only", "command_prefix": "!"},
+            headers=headers,
+        )
+        assert response.status_code == 200
+        assert response.json()["default_reply_mode"] == "command_only"
+        assert response.json()["command_prefix"] == "!"
+
+
 def test_onebot_reverse_ws_receives_group_message_and_sends_action(tmp_path):
     settings = Settings(
         DATABASE_URL=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",

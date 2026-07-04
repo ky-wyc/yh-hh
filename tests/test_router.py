@@ -140,3 +140,13 @@ async def test_admin_can_add_keyword_and_keyword_hit_replies(settings, repo, mes
     assert add.replied is True
     assert hit.replied is True
     assert sender.group_messages[-1] == ("10001", "请不要发广告")
+
+
+async def test_configured_command_prefix_is_used_for_routing(settings, repo, message_router, sender):
+    await repo.update_bot_settings({"command_prefix": "!"})
+    event = normalize_group_message(group_event("!ping", message_id=7), settings)
+
+    outcome = await message_router.handle(event, repo, sender)
+
+    assert outcome.replied is True
+    assert sender.group_messages == [("10001", "pong")]

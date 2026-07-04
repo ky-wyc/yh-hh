@@ -65,7 +65,8 @@ class MessageRouter:
             f"{event.nickname or event.user_id}: {event.text}",
         )
 
-        command = self._parse_command(event.text)
+        bot_settings = await repo.get_bot_settings()
+        command = self._parse_command(event.text, bot_settings.command_prefix)
         if command:
             name, args = command
             recent_context = await self.rate_limiter.get_context(event.group_id)
@@ -150,10 +151,11 @@ class MessageRouter:
         await repo.mark_message(message_log, "observed", "no_trigger")
         return RouteOutcome(status="observed", reason="no_trigger")
 
-    def _parse_command(self, text: str) -> tuple[str, str] | None:
-        if not text.startswith(self.settings.command_prefix):
+    def _parse_command(self, text: str, prefix: str | None = None) -> tuple[str, str] | None:
+        command_prefix = prefix or self.settings.command_prefix
+        if not text.startswith(command_prefix):
             return None
-        payload = text[len(self.settings.command_prefix) :].strip()
+        payload = text[len(command_prefix) :].strip()
         if not payload:
             return None
         name, _, args = payload.partition(" ")

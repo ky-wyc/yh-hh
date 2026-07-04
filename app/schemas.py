@@ -19,6 +19,18 @@ class GroupUpdate(BaseModel):
     name: str | None = None
 
 
+class BotSettingsOut(BaseModel):
+    default_group_enabled: bool
+    default_reply_mode: str
+    command_prefix: str
+
+
+class BotSettingsUpdate(BaseModel):
+    default_group_enabled: bool | None = None
+    default_reply_mode: str | None = None
+    command_prefix: str | None = None
+
+
 class LLMSettingsOut(BaseModel):
     provider: str
     base_url: str
@@ -41,4 +53,3 @@ class LLMSettingsUpdate(BaseModel):
 
 class LLMTestRequest(BaseModel):
     prompt: str = "ping"
-
