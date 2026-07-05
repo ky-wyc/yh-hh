@@ -6,7 +6,20 @@ __pycache__/
 .ruff_cache/
 
 .env
+.env.*
+!.env.example
+!.env.production.example
 data/
+*.sqlite
+*.sqlite3
+*.db
+*.pem
+*.key
+*.p12
+*.crt
+*.csr
+*.jks
+*.keystore
 
 web-admin/node_modules/
 web-admin/dist/
