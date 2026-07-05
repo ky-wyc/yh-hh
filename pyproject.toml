@@ -28,6 +28,9 @@ dev = [
 [project.scripts]
 qqbot = "app.main:run"
 
+[tool.setuptools.packages.find]
+include = ["app*"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
