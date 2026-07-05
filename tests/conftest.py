@@ -13,9 +13,9 @@ from app.router import MessageRouter
 
 
 @pytest.fixture
-def settings() -> Settings:
+def settings(tmp_path) -> Settings:
     return Settings(
-        DATABASE_URL="sqlite+aiosqlite:///:memory:",
+        DATABASE_URL=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",
         REDIS_URL="",
         ALLOWED_GROUPS="10001",
         BOT_QQ="123456",

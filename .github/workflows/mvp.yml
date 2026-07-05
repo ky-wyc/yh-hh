@@ -31,6 +31,16 @@ jobs:
         working-directory: web-admin
         run: pnpm install --frozen-lockfile
 
-      - name: Run MVP checks
-        run: python scripts/check_all.py --pnpm pnpm
+      - name: Validate shell scripts
+        run: sh -n scripts/*.sh
 
+      - name: Validate Docker Compose config
+        run: docker compose config
+
+      - name: Build Docker images
+        run: |
+          docker build -t qqbot-bot-app .
+          docker build -t qqbot-web-admin ./web-admin
+
+      - name: Run MVP checks with smoke
+        run: python scripts/check_all.py --pnpm pnpm --with-smoke

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, Path, Request
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,8 +23,14 @@ router = APIRouter(prefix="/api")
 
 
 async def get_session(request: Request) -> AsyncSession:
-    async with request.app.state.session_factory() as session:
+    session = request.app.state.session_factory()
+    try:
         yield session
+    except Exception:
+        await session.rollback()
+        raise
+    finally:
+        await session.close()
 
 
 def repo_from(request: Request, session: AsyncSession) -> Repository:
@@ -65,6 +73,8 @@ async def onebot_status(request: Request):
         "connection_mode": status.connection_mode,
         "connected_at": status.connected_at.isoformat() if status.connected_at else None,
         "disconnected_at": status.disconnected_at.isoformat() if status.disconnected_at else None,
+        "last_event_at": status.last_event_at.isoformat() if status.last_event_at else None,
+        "last_action_at": status.last_action_at.isoformat() if status.last_action_at else None,
         "last_error": status.last_error,
     }
 
@@ -94,7 +104,7 @@ async def list_groups(request: Request, session: AsyncSession = Depends(get_sess
 
 @router.patch("/groups/{qq_group_id}", dependencies=[Depends(require_admin)])
 async def patch_group(
-    qq_group_id: str,
+    qq_group_id: Annotated[str, Path(pattern=r"^\d+$")],
     payload: GroupUpdate,
     request: Request,
     session: AsyncSession = Depends(get_session),
@@ -184,6 +194,7 @@ async def logs(request: Request, session: AsyncSession = Depends(get_session)):
             "id": item.id,
             "group_id": item.group_id,
             "user_id": item.user_id,
+            "message_id": item.message_id,
             "content": item.content,
             "status": item.status,
             "drop_reason": item.drop_reason,
@@ -201,6 +212,7 @@ async def errors(request: Request, session: AsyncSession = Depends(get_session))
             "id": item.id,
             "group_id": item.group_id,
             "user_id": item.user_id,
+            "message_id": item.message_id,
             "content": item.content,
             "status": item.status,
             "drop_reason": item.drop_reason,

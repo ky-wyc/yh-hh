@@ -16,6 +16,8 @@ class OneBotStatus:
     connection_mode: str = "reverse_ws"
     connected_at: datetime | None = None
     disconnected_at: datetime | None = None
+    last_event_at: datetime | None = None
+    last_action_at: datetime | None = None
     last_error: str = ""
 
 
@@ -24,6 +26,7 @@ class OneBotConnectionManager:
     status: OneBotStatus = field(default_factory=OneBotStatus)
     websocket: WebSocket | None = None
     sent_actions: list[dict[str, Any]] = field(default_factory=list)
+    max_sent_actions: int = 100
 
     async def attach(self, websocket: WebSocket) -> None:
         await websocket.accept()
@@ -32,19 +35,33 @@ class OneBotConnectionManager:
         self.status.connected_at = datetime.now(UTC)
         self.status.last_error = ""
 
-    def detach(self, error: str = "") -> None:
+    def detach(self, error: str = "", websocket: WebSocket | None = None) -> None:
+        if websocket is not None and websocket is not self.websocket:
+            return
         self.websocket = None
         self.status.online = False
         self.status.disconnected_at = datetime.now(UTC)
         self.status.last_error = error
 
+    def record_event(self) -> None:
+        self.status.last_event_at = datetime.now(UTC)
+
     async def send_action(self, action: str, params: dict[str, Any]) -> str:
         echo = str(uuid.uuid4())
         payload = {"action": action, "params": params, "echo": echo}
         self.sent_actions.append(payload)
+        if len(self.sent_actions) > self.max_sent_actions:
+            del self.sent_actions[: -self.max_sent_actions]
         if self.websocket is None:
+            self.status.online = False
+            self.status.last_error = "OneBot reverse WebSocket is not connected."
             raise RuntimeError("OneBot reverse WebSocket is not connected.")
-        await self.websocket.send_text(json.dumps(payload, ensure_ascii=False))
+        try:
+            await self.websocket.send_text(json.dumps(payload, ensure_ascii=False))
+        except Exception as exc:
+            self.detach(f"send_action_failed:{type(exc).__name__}", self.websocket)
+            raise
+        self.status.last_action_at = datetime.now(UTC)
         return echo
 
     async def send_group_message(self, group_id: str, message: str) -> None:

@@ -25,6 +25,9 @@ class BotCache(Protocol):
     async def health(self) -> dict[str, str]:
         ...
 
+    async def close(self) -> None:
+        ...
+
 
 @dataclass(slots=True)
 class MemoryRateLimiter:
@@ -53,6 +56,9 @@ class MemoryRateLimiter:
     async def health(self) -> dict[str, str]:
         return {"backend": "memory", "status": "ok"}
 
+    async def close(self) -> None:
+        return None
+
 
 class RedisRateLimiter:
     def __init__(self, redis: Redis):
@@ -79,6 +85,9 @@ class RedisRateLimiter:
     async def health(self) -> dict[str, str]:
         await self.redis.ping()
         return {"backend": "redis", "status": "ok"}
+
+    async def close(self) -> None:
+        await self.redis.aclose()
 
 
 async def create_rate_limiter(redis_url: str):

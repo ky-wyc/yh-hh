@@ -10,12 +10,48 @@ from app.models import User
 from app.router import MessageRouter
 
 
+class FailingSender:
+    async def send_group_message(self, group_id: str, message: str) -> None:
+        raise RuntimeError("send failed")
+
+
 def group_event(text: str, *, group_id: str = "10001", user_id: str = "20001", message_id: int = 1):
     return {
         "post_type": "message",
         "message_type": "group",
         "message_id": message_id,
         "group_id": int(group_id),
+        "user_id": int(user_id),
+        "message": text,
+        "sender": {"nickname": "tester"},
+    }
+
+
+def group_segment_event(message, *, group_id: str = "10001", user_id: str = "20001", message_id: int = 1):
+    return {
+        "post_type": "message",
+        "message_type": "group",
+        "message_id": message_id,
+        "group_id": int(group_id),
+        "user_id": int(user_id),
+        "message": message,
+        "sender": {"nickname": "tester"},
+    }
+
+
+def group_event_with_self_id(
+    text: str,
+    *,
+    self_id: str = "123456",
+    user_id: str = "123456",
+    message_id: int = 25,
+):
+    return {
+        "post_type": "message",
+        "message_type": "group",
+        "self_id": int(self_id),
+        "message_id": message_id,
+        "group_id": 10001,
         "user_id": int(user_id),
         "message": text,
         "sender": {"nickname": "tester"},
@@ -40,6 +76,22 @@ async def test_group_whitelist_drops_message(settings, repo, message_router, sen
     assert outcome.replied is False
     assert outcome.reason == "group_not_allowed"
     assert sender.group_messages == []
+    assert await repo.get_groups() == []
+
+
+async def test_runtime_allowed_groups_from_admin_settings(settings, repo, message_router, sender):
+    message_router.settings.allowed_groups_raw = ""
+    await repo.update_bot_settings({"allowed_groups": "10001"})
+    allowed = normalize_group_message(group_event("/ping", group_id="10001", message_id=101), settings)
+    denied = normalize_group_message(group_event("/ping", group_id="99999", message_id=102), settings)
+
+    allowed_outcome = await message_router.handle(allowed, repo, sender)
+    denied_outcome = await message_router.handle(denied, repo, sender)
+
+    assert allowed_outcome.status == "handled"
+    assert denied_outcome.status == "dropped"
+    assert denied_outcome.reason == "group_not_allowed"
+    assert sender.group_messages == [("10001", "pong")]
 
 
 async def test_disabled_group_does_not_reply(settings, repo, message_router, sender):
@@ -53,6 +105,19 @@ async def test_disabled_group_does_not_reply(settings, repo, message_router, sen
     assert sender.group_messages == []
 
 
+async def test_disabled_reply_mode_does_not_reply(settings, repo, message_router, sender):
+    await repo.update_group("10001", reply_mode="disabled")
+    event = normalize_group_message(group_event("/ping", message_id=14), settings)
+
+    outcome = await message_router.handle(event, repo, sender)
+
+    errors = await repo.recent_errors()
+    assert outcome.replied is False
+    assert outcome.reason == "reply_mode_disabled"
+    assert sender.group_messages == []
+    assert errors[0].drop_reason == "reply_mode_disabled"
+
+
 async def test_duplicate_event_does_not_reply_twice(settings, repo, message_router, sender):
     event = normalize_group_message(group_event("/ping", message_id=10), settings)
 
@@ -64,6 +129,18 @@ async def test_duplicate_event_does_not_reply_twice(settings, repo, message_rout
     assert sender.group_messages == [("10001", "pong")]
 
 
+async def test_send_failure_is_logged_as_error(settings, repo, message_router):
+    event = normalize_group_message(group_event("/ping", message_id=13), settings)
+
+    outcome = await message_router.handle(event, repo, FailingSender())
+
+    errors = await repo.recent_errors()
+    assert outcome.status == "error"
+    assert outcome.reason == "send_failed"
+    assert errors[0].status == "error"
+    assert errors[0].drop_reason == "send_failed:RuntimeError"
+
+
 async def test_ai_without_api_key_has_clear_error(settings, repo, message_router, sender):
     event = normalize_group_message(group_event("/ai hello", message_id=2), settings)
 
@@ -71,6 +148,118 @@ async def test_ai_without_api_key_has_clear_error(settings, repo, message_router
 
     assert outcome.replied is True
     assert "API Key" in sender.group_messages[0][1]
+
+
+async def test_mention_only_replies_to_at_bot(settings, repo, message_router, sender):
+    event = normalize_group_message(
+        group_segment_event(
+            [
+                {"type": "at", "data": {"qq": "123456"}},
+                {"type": "text", "data": {"text": " hello"}},
+            ],
+            message_id=15,
+        ),
+        settings,
+    )
+
+    outcome = await message_router.handle(event, repo, sender)
+
+    assert outcome.replied is True
+    assert outcome.skill_name == "ai"
+    assert "API Key" in sender.group_messages[0][1]
+
+
+async def test_runtime_bot_qq_detects_cq_at(settings, repo, message_router, sender):
+    message_router.settings.bot_qq = ""
+    await repo.update_bot_settings({"bot_qq": "888001"})
+    event = normalize_group_message(
+        group_event("[CQ:at,qq=888001] hello", message_id=26),
+        settings,
+    )
+
+    outcome = await message_router.handle(event, repo, sender)
+
+    assert event.at_bot is False
+    assert outcome.replied is True
+    assert outcome.skill_name == "ai"
+    assert "API Key" in sender.group_messages[0][1]
+
+
+async def test_runtime_bot_nickname_triggers_mention_reply(settings, repo, message_router, sender):
+    await repo.update_bot_settings({"bot_nicknames": "小灵"})
+    event = normalize_group_message(group_event("小灵 你能做什么？", message_id=27), settings)
+
+    outcome = await message_router.handle(event, repo, sender)
+
+    assert event.at_bot is False
+    assert outcome.replied is True
+    assert outcome.skill_name == "ai"
+    assert "API Key" in sender.group_messages[0][1]
+
+
+async def test_command_only_does_not_reply_to_at_bot(settings, repo, message_router, sender):
+    await repo.update_group("10001", reply_mode="command_only")
+    event = normalize_group_message(
+        group_segment_event(
+            [
+                {"type": "at", "data": {"qq": "123456"}},
+                {"type": "text", "data": {"text": " hello"}},
+            ],
+            message_id=16,
+        ),
+        settings,
+    )
+
+    outcome = await message_router.handle(event, repo, sender)
+
+    assert outcome.replied is False
+    assert outcome.reason == "no_trigger"
+    assert sender.group_messages == []
+
+
+async def test_bot_self_message_is_dropped(settings, repo, message_router, sender):
+    event = normalize_group_message(group_event("/ping", user_id="123456", message_id=21), settings)
+
+    outcome = await message_router.handle(event, repo, sender)
+
+    assert outcome.replied is False
+    assert outcome.reason == "bot_self_message"
+    assert sender.group_messages == []
+    assert await repo.get_groups() == []
+
+
+async def test_bot_self_message_is_dropped_using_onebot_self_id(repo, message_router, sender):
+    message_router.settings.bot_qq = ""
+    event = normalize_group_message(group_event_with_self_id("/ping"), message_router.settings)
+
+    outcome = await message_router.handle(event, repo, sender)
+
+    assert outcome.replied is False
+    assert outcome.reason == "bot_self_message"
+    assert sender.group_messages == []
+    assert await repo.get_groups() == []
+
+
+async def test_active_mode_replies_to_plain_question(settings, repo, message_router, sender):
+    await repo.update_group("10001", reply_mode="active")
+    event = normalize_group_message(group_event("今天适合做什么？", message_id=22), settings)
+
+    outcome = await message_router.handle(event, repo, sender)
+
+    assert outcome.replied is True
+    assert outcome.skill_name == "ai"
+    assert "API Key" in sender.group_messages[0][1]
+
+
+async def test_active_mode_observes_plain_statement(settings, repo, message_router, sender):
+    await repo.update_group("10001", reply_mode="active")
+    event = normalize_group_message(group_event("今天继续推进项目", message_id=23), settings)
+
+    outcome = await message_router.handle(event, repo, sender)
+
+    assert outcome.replied is False
+    assert outcome.reason == "no_trigger"
+    assert sender.group_messages == []
 
 
 async def test_ai_success_uses_openai_compatible_endpoint(settings, repo, message_router, sender):
@@ -126,6 +315,40 @@ async def test_ordinary_user_cannot_warn(settings, repo, message_router, sender)
     assert "权限不足" in sender.group_messages[0][1]
 
 
+async def test_admin_qq_ids_can_run_admin_lite_commands(repo, message_router, sender):
+    message_router.settings.admin_qq_ids_raw = "20001"
+    event = normalize_group_message(
+        group_event("/warn @someone noisy", message_id=20),
+        message_router.settings,
+    )
+
+    outcome = await message_router.handle(event, repo, sender)
+
+    assert outcome.replied is True
+    assert sender.group_messages == [("10001", "已记录警告：@someone noisy")]
+    audit_logs = await repo.recent_audit_logs()
+    assert audit_logs[0].action == "warn"
+    assert audit_logs[0].actor_user_id == "20001"
+    assert audit_logs[0].actor_role == "super_admin"
+
+
+async def test_runtime_admin_qq_ids_from_admin_settings(settings, repo, message_router, sender):
+    message_router.settings.admin_qq_ids_raw = ""
+    await repo.update_bot_settings({"admin_qq_ids": "20001"})
+    event = normalize_group_message(
+        group_event("/warn @someone noisy", message_id=28),
+        settings,
+    )
+
+    outcome = await message_router.handle(event, repo, sender)
+
+    assert outcome.replied is True
+    assert sender.group_messages == [("10001", "已记录警告：@someone noisy")]
+    audit_logs = await repo.recent_audit_logs()
+    assert audit_logs[0].action == "warn"
+    assert audit_logs[0].actor_role == "super_admin"
+
+
 async def test_admin_can_add_keyword_and_keyword_hit_replies(settings, repo, message_router, sender):
     admin = User(qq_id="20001", role="group_admin")
     repo.session.add(admin)
@@ -142,6 +365,27 @@ async def test_admin_can_add_keyword_and_keyword_hit_replies(settings, repo, mes
     assert sender.group_messages[-1] == ("10001", "请不要发广告")
 
 
+async def test_admin_can_update_existing_keyword_rule(settings, repo, message_router, sender):
+    admin = User(qq_id="20001", role="group_admin")
+    repo.session.add(admin)
+    await repo.session.flush()
+
+    first_add = normalize_group_message(
+        group_event("/banword add spam 第一条回复", message_id=17), settings
+    )
+    second_add = normalize_group_message(
+        group_event("/banword add spam 第二条回复", message_id=18), settings
+    )
+    hit_event = normalize_group_message(group_event("spam again", message_id=19), settings)
+
+    await message_router.handle(first_add, repo, sender)
+    await message_router.handle(second_add, repo, sender)
+    hit = await message_router.handle(hit_event, repo, sender)
+
+    assert hit.replied is True
+    assert sender.group_messages[-1] == ("10001", "第二条回复")
+
+
 async def test_configured_command_prefix_is_used_for_routing(settings, repo, message_router, sender):
     await repo.update_bot_settings({"command_prefix": "!"})
     event = normalize_group_message(group_event("!ping", message_id=7), settings)
@@ -150,3 +394,14 @@ async def test_configured_command_prefix_is_used_for_routing(settings, repo, mes
 
     assert outcome.replied is True
     assert sender.group_messages == [("10001", "pong")]
+
+
+async def test_help_uses_configured_command_prefix(settings, repo, message_router, sender):
+    await repo.update_bot_settings({"command_prefix": "!"})
+    event = normalize_group_message(group_event("!help", message_id=24), settings)
+
+    outcome = await message_router.handle(event, repo, sender)
+
+    assert outcome.replied is True
+    assert "!ping" in sender.group_messages[0][1]
+    assert "/ping" not in sender.group_messages[0][1]

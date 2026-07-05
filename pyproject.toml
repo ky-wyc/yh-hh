@@ -19,6 +19,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "pyyaml>=6.0.2",
     "pytest>=8.3.0",
     "pytest-asyncio>=0.23.8",
     "ruff>=0.5.6",
@@ -30,8 +31,10 @@ qqbot = "app.main:run"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+filterwarnings = [
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated:starlette.exceptions.StarletteDeprecationWarning",
+]
 
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-

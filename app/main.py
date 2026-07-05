@@ -37,6 +37,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             yield
         finally:
+            await app.state.rate_limiter.close()
             await app.state.engine.dispose()
 
     app = FastAPI(title="QQBot MVP", version="0.1.0", lifespan=lifespan)
@@ -69,6 +70,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await app.state.onebot.attach(websocket)
         try:
             async for payload in websocket_event_stream(websocket):
+                app.state.onebot.record_event()
                 event = normalize_group_message(payload, settings)
                 if event is None:
                     continue
@@ -82,10 +84,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         await session.rollback()
                         app.state.onebot.status.last_error = str(exc)
         except WebSocketDisconnect:
-            app.state.onebot.detach()
+            app.state.onebot.detach(websocket=websocket)
         except Exception as exc:
             logger.exception("OneBot websocket crashed")
-            app.state.onebot.detach(str(exc))
+            app.state.onebot.detach(str(exc), websocket)
 
     app.include_router(admin_router)
     return app

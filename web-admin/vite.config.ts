@@ -3,10 +3,21 @@ import vue from '@vitejs/plugin-vue'
 
 export default defineConfig({
   plugins: [vue()],
+  build: {
+    chunkSizeWarningLimit: 1000,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vue: ['vue', 'vue-router', 'pinia'],
+          element: ['element-plus'],
+          http: ['axios']
+        }
+      }
+    }
+  },
   server: {
     proxy: {
       '/api': 'http://localhost:8000'
     }
   }
 })
-

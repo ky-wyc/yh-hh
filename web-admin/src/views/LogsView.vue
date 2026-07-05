@@ -9,6 +9,7 @@
 
   <el-table v-if="active === 'messages' || active === 'errors'" :data="logs" border>
     <el-table-column prop="id" label="ID" width="80" />
+    <el-table-column prop="message_id" label="消息ID" width="110" />
     <el-table-column prop="group_id" label="群号" />
     <el-table-column prop="user_id" label="用户" />
     <el-table-column prop="content" label="内容" />

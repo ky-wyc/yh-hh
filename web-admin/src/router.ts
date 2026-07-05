@@ -4,15 +4,25 @@ import DashboardView from './views/DashboardView.vue'
 import GroupsView from './views/GroupsView.vue'
 import LlmSettingsView from './views/LlmSettingsView.vue'
 import LogsView from './views/LogsView.vue'
+import { hasToken } from './auth'
 
 export const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/login', component: LoginView },
-    { path: '/', component: DashboardView },
-    { path: '/groups', component: GroupsView },
-    { path: '/llm', component: LlmSettingsView },
-    { path: '/logs', component: LogsView }
+    { path: '/', component: DashboardView, meta: { requiresAuth: true } },
+    { path: '/groups', component: GroupsView, meta: { requiresAuth: true } },
+    { path: '/llm', component: LlmSettingsView, meta: { requiresAuth: true } },
+    { path: '/logs', component: LogsView, meta: { requiresAuth: true } }
   ]
 })
 
+router.beforeEach((to) => {
+  if (to.meta.requiresAuth && !hasToken()) {
+    return '/login'
+  }
+  if (to.path === '/login' && hasToken()) {
+    return '/'
+  }
+  return true
+})

@@ -23,6 +23,7 @@ body {
 .topbar {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   background: #fff;
   border-bottom: 1px solid #e2e8f0;
   font-weight: 600;
@@ -36,4 +37,3 @@ body {
 .toolbar {
   margin-bottom: 16px;
 }
-

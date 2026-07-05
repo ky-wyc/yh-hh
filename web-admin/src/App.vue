@@ -6,12 +6,15 @@
       <el-menu router :default-active="$route.path" background-color="#0f172a" text-color="#cbd5e1" active-text-color="#fff">
         <el-menu-item index="/">仪表盘</el-menu-item>
         <el-menu-item index="/groups">群管理</el-menu-item>
-        <el-menu-item index="/llm">模型设置</el-menu-item>
+        <el-menu-item index="/llm">系统设置</el-menu-item>
         <el-menu-item index="/logs">日志中心</el-menu-item>
       </el-menu>
     </el-aside>
     <el-container>
-      <el-header class="topbar">新一代 QQ 群机器人 MVP</el-header>
+      <el-header class="topbar">
+        <span>新一代 QQ 群机器人 MVP</span>
+        <el-button size="small" @click="logout">退出</el-button>
+      </el-header>
       <el-main>
         <router-view />
       </el-main>
@@ -19,3 +22,14 @@
   </el-container>
 </template>
 
+<script setup lang="ts">
+import { useRouter } from 'vue-router'
+import { clearToken } from './auth'
+
+const router = useRouter()
+
+function logout() {
+  clearToken()
+  router.push('/login')
+}
+</script>

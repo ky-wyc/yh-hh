@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 from sqlalchemy.orm import DeclarativeBase
 
 from app.config import Settings
@@ -18,6 +19,7 @@ def create_engine(settings: Settings) -> AsyncEngine:
         db_path = settings.database_url.rsplit("/", 1)[-1]
         if db_path and db_path != ":memory:":
             Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+        return create_async_engine(settings.database_url, future=True, poolclass=NullPool)
     return create_async_engine(settings.database_url, future=True)
 
 
@@ -37,4 +39,3 @@ async def session_dependency(
 ) -> AsyncIterator[AsyncSession]:
     async with session_factory() as session:
         yield session
-

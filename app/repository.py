@@ -7,7 +7,7 @@ from typing import Any
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import Settings
+from app.config import Settings, parse_csv
 from app.models import AuditLog, BotReply, Group, KeywordRule, LLMUsageLog, MessageLog, Setting, User
 
 
@@ -27,6 +27,24 @@ class BotConfig:
     default_group_enabled: bool
     default_reply_mode: str
     command_prefix: str
+    bot_qq: str
+    bot_nicknames: str
+    admin_qq_ids: str
+    allowed_groups: str
+    rate_limit_per_user_per_minute: int
+    rate_limit_per_group_per_minute: int
+
+    @property
+    def bot_nickname_list(self) -> list[str]:
+        return parse_csv(self.bot_nicknames)
+
+    @property
+    def admin_qq_id_set(self) -> set[str]:
+        return set(parse_csv(self.admin_qq_ids))
+
+    @property
+    def allowed_group_set(self) -> set[str]:
+        return set(parse_csv(self.allowed_groups))
 
 
 class Repository:
@@ -36,14 +54,16 @@ class Repository:
 
     async def ensure_user(self, qq_id: str, nickname: str = "") -> User:
         result = await self.session.execute(select(User).where(User.qq_id == qq_id))
+        bot_settings = await self.get_bot_settings()
+        admin_qq_ids = bot_settings.admin_qq_id_set
         user = result.scalar_one_or_none()
         if user:
             if nickname and user.nickname != nickname:
                 user.nickname = nickname
-            if qq_id in self.settings.admin_qq_ids and user.role == "normal_user":
+            if qq_id in admin_qq_ids and user.role == "normal_user":
                 user.role = "super_admin"
             return user
-        role = "super_admin" if qq_id in self.settings.admin_qq_ids else "normal_user"
+        role = "super_admin" if qq_id in admin_qq_ids else "normal_user"
         user = User(qq_id=qq_id, nickname=nickname, role=role)
         self.session.add(user)
         await self.session.flush()
@@ -156,7 +176,8 @@ class Repository:
 
     async def get_llm_config(self) -> LLMConfig:
         async def val(key: str, default: str) -> str:
-            return await self.get_setting(key) or default
+            stored = await self.get_setting(key)
+            return default if stored is None else stored
 
         return LLMConfig(
             provider=await val("llm_provider", self.settings.llm_provider),
@@ -185,17 +206,27 @@ class Repository:
                 await self.set_setting(key_map[field], str(value))
 
     async def get_bot_settings(self) -> BotConfig:
-        default_group_enabled = await self.get_setting("default_group_enabled")
-        default_reply_mode = await self.get_setting("default_reply_mode")
-        command_prefix = await self.get_setting("command_prefix")
+        async def val(key: str, default: str) -> str:
+            stored = await self.get_setting(key)
+            return default if stored is None else stored
+
+        default_group_enabled = await val("default_group_enabled", str(self.settings.default_group_enabled))
         return BotConfig(
             default_group_enabled=(
-                self.settings.default_group_enabled
-                if default_group_enabled is None
-                else default_group_enabled.lower() == "true"
+                default_group_enabled.lower() == "true"
             ),
-            default_reply_mode=default_reply_mode or self.settings.default_reply_mode,
-            command_prefix=command_prefix or self.settings.command_prefix,
+            default_reply_mode=await val("default_reply_mode", self.settings.default_reply_mode),
+            command_prefix=await val("command_prefix", self.settings.command_prefix),
+            bot_qq=await val("bot_qq", self.settings.bot_qq),
+            bot_nicknames=await val("bot_nicknames", self.settings.bot_nicknames_raw),
+            admin_qq_ids=await val("admin_qq_ids", self.settings.admin_qq_ids_raw),
+            allowed_groups=await val("allowed_groups", self.settings.allowed_groups_raw),
+            rate_limit_per_user_per_minute=int(
+                await val("rate_limit_per_user_per_minute", str(self.settings.rate_limit_per_user_per_minute))
+            ),
+            rate_limit_per_group_per_minute=int(
+                await val("rate_limit_per_group_per_minute", str(self.settings.rate_limit_per_group_per_minute))
+            ),
         )
 
     async def update_bot_settings(self, changes: dict[str, Any]) -> None:
@@ -203,6 +234,12 @@ class Repository:
             "default_group_enabled": "default_group_enabled",
             "default_reply_mode": "default_reply_mode",
             "command_prefix": "command_prefix",
+            "bot_qq": "bot_qq",
+            "bot_nicknames": "bot_nicknames",
+            "admin_qq_ids": "admin_qq_ids",
+            "allowed_groups": "allowed_groups",
+            "rate_limit_per_user_per_minute": "rate_limit_per_user_per_minute",
+            "rate_limit_per_group_per_minute": "rate_limit_per_group_per_minute",
         }
         for field, value in changes.items():
             if value is not None and field in key_map:
@@ -211,6 +248,17 @@ class Repository:
     async def add_keyword_rule(
         self, *, group_id: str, keyword: str, response: str, created_by: str
     ) -> KeywordRule:
+        result = await self.session.execute(
+            select(KeywordRule).where(KeywordRule.group_id == group_id, KeywordRule.keyword == keyword)
+        )
+        existing = result.scalar_one_or_none()
+        if existing is not None:
+            existing.response = response
+            existing.created_by = created_by
+            existing.enabled = True
+            await self.session.flush()
+            return existing
+
         rule = KeywordRule(
             group_id=group_id,
             keyword=keyword,

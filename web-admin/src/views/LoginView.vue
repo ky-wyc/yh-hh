@@ -20,6 +20,7 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
+import { setToken } from '../auth'
 
 const router = useRouter()
 const username = ref('admin')
@@ -28,7 +29,7 @@ const password = ref('')
 async function submit() {
   try {
     const { data } = await api.post('/auth/login', { username: username.value, password: password.value })
-    localStorage.setItem('token', data.access_token)
+    setToken(data.access_token)
     router.push('/')
   } catch {
     ElMessage.error('登录失败')
@@ -52,4 +53,3 @@ async function submit() {
   width: 100%;
 }
 </style>
-
