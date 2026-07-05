@@ -34,6 +34,9 @@ jobs:
       - name: Validate shell scripts
         run: sh -n scripts/*.sh
 
+      - name: Prepare CI env file
+        run: touch .env
+
       - name: Validate Docker Compose config
         run: docker compose config
 
