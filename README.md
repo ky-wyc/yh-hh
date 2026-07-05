@@ -1,4 +1,4 @@
-# 新一代 QQ 群机器人 MVP
+# 机器人
 
 本仓库实现 `docs/MVP规格.md` 描述的 MVP 版本：QQ 小号通过 OneBot v11 反向 WebSocket 接入，Bot Core 负责消息路由、基础 Skill、大模型调用、后台 API 和 Docker 部署。
 
