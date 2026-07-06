@@ -4,8 +4,10 @@ import json
 import random
 import re
 from dataclasses import dataclass
+from datetime import timedelta
 
 from app.llm import LLMService
+from app.models import now_utc
 from app.repository import Repository
 
 
@@ -304,14 +306,36 @@ class SkillRegistry:
             return SkillResult(
                 text=f"用法：{ctx.command_prefix}warn @用户 原因", skill_name="admin-lite"
             )
+        target_id, reason = self._parse_target_user(args)
+        group = await ctx.repo.ensure_group(ctx.group_id)
+        moderation = ctx.repo.group_moderation_config(group)
+        violation_count = 0
+        if target_id:
+            since = now_utc() - timedelta(hours=moderation.violation_window_hours)
+            violation_count = (
+                await ctx.repo.moderation_violation_count(
+                    group_id=ctx.group_id,
+                    user_id=target_id,
+                    since=since,
+                )
+                + 1
+            )
         await ctx.repo.audit(
             action="warn",
             actor_user_id=ctx.user_id,
             actor_role=user.role,
             group_id=ctx.group_id,
-            detail={"args": args.strip()},
+            target_type="user" if target_id else "",
+            target_id=target_id,
+            detail={
+                "args": args.strip(),
+                "reason": reason or args.strip(),
+                "violation_count": violation_count,
+                "window_hours": moderation.violation_window_hours,
+            },
         )
-        return SkillResult(text=f"已记录警告：{args.strip()}", skill_name="admin-lite")
+        suffix = f"，近期累计违规 {violation_count} 次" if target_id else ""
+        return SkillResult(text=f"已记录警告：{args.strip()}{suffix}", skill_name="admin-lite")
 
     async def mute(self, args: str, ctx: SkillContext) -> SkillResult:
         user = await ctx.repo.ensure_user(ctx.user_id)

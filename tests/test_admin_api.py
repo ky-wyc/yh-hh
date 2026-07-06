@@ -749,6 +749,10 @@ def test_skill_settings_and_group_detail_can_be_managed_from_admin(tmp_path):
                 "flood_message_count": 4,
                 "flood_window_seconds": 20,
                 "flood_mute_seconds": 90,
+                "violation_window_hours": 48,
+                "escalation_enabled": True,
+                "escalation_multiplier": 3,
+                "escalation_max_mute_seconds": 900,
             },
             headers=headers,
         )
@@ -782,6 +786,11 @@ def test_skill_settings_and_group_detail_can_be_managed_from_admin(tmp_path):
         assert detail.json()["moderation"]["welcome_message"] == "欢迎 {user_id}"
         assert detail.json()["moderation"]["flood_message_count"] == 4
         assert detail.json()["moderation"]["flood_mute_seconds"] == 90
+        assert detail.json()["moderation"]["violation_window_hours"] == 48
+        assert detail.json()["moderation"]["escalation_enabled"] is True
+        assert detail.json()["moderation"]["escalation_multiplier"] == 3
+        assert detail.json()["moderation"]["escalation_max_mute_seconds"] == 900
+        assert "moderation_stats" in detail.json()
         assert "messages" in detail.json()["overview"]
         assert any(item["skill_name"] == "dice" for item in detail.json()["skills"])
 

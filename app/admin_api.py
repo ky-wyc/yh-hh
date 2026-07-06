@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
@@ -37,6 +37,7 @@ from app.schemas import (
     MemoryCreate,
     MemoryOut,
     MemoryUpdate,
+    ModerationStatOut,
     ScheduledTaskCreate,
     ScheduledTaskOut,
     ScheduledTaskUpdate,
@@ -173,6 +174,10 @@ def group_moderation_out(repo: Repository, group) -> GroupModerationConfigOut:
         flood_message_count=config.flood_message_count,
         flood_window_seconds=config.flood_window_seconds,
         flood_mute_seconds=config.flood_mute_seconds,
+        violation_window_hours=config.violation_window_hours,
+        escalation_enabled=config.escalation_enabled,
+        escalation_multiplier=config.escalation_multiplier,
+        escalation_max_mute_seconds=config.escalation_max_mute_seconds,
     )
 
 
@@ -272,6 +277,12 @@ async def get_group_detail(
     group = await repo.get_group_by_qq_id(qq_group_id)
     if group is None:
         raise HTTPException(status_code=404, detail="group not found")
+    moderation = repo.group_moderation_config(group)
+    moderation_stats = await repo.moderation_violation_summary(
+        group_id=qq_group_id,
+        since=datetime.now(UTC).replace(tzinfo=None)
+        - timedelta(hours=moderation.violation_window_hours),
+    )
     return GroupDetailOut(
         qq_group_id=group.qq_group_id,
         name=group.name,
@@ -279,6 +290,14 @@ async def get_group_detail(
         reply_mode=group.reply_mode,
         moderation=group_moderation_out(repo, group),
         overview=await repo.group_overview(qq_group_id),
+        moderation_stats=[
+            ModerationStatOut(
+                user_id=item["user_id"],
+                violation_count=item["violation_count"],
+                last_violation_at=item["last_violation_at"].isoformat(),
+            )
+            for item in moderation_stats
+        ],
         skills=[await skill_setting_out(repo, name, qq_group_id) for name in sorted(SKILL_CATALOG)],
     )
 
@@ -308,6 +327,10 @@ async def patch_group(
             "flood_message_count",
             "flood_window_seconds",
             "flood_mute_seconds",
+            "violation_window_hours",
+            "escalation_enabled",
+            "escalation_multiplier",
+            "escalation_max_mute_seconds",
         }
     }
     if moderation_changes:

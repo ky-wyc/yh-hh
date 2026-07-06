@@ -554,6 +554,40 @@ async def test_flood_control_mutes_normal_user(settings, repo, message_router, s
     assert audit_logs[0].action == "flood_mute"
 
 
+async def test_flood_control_escalates_repeat_violations(settings, repo, message_router, sender):
+    await repo.update_group_moderation_config(
+        "10001",
+        {
+            "flood_enabled": True,
+            "flood_message_count": 3,
+            "flood_window_seconds": 30,
+            "flood_mute_seconds": 45,
+            "violation_window_hours": 24,
+            "escalation_enabled": True,
+            "escalation_multiplier": 2,
+            "escalation_max_mute_seconds": 120,
+        },
+    )
+
+    for index in range(3):
+        outcome = await message_router.handle(
+            normalize_group_message(group_event(f"刷屏 {index}", message_id=80 + index), settings),
+            repo,
+            sender,
+        )
+    second = await message_router.handle(
+        normalize_group_message(group_event("继续刷屏", message_id=90), settings),
+        repo,
+        sender,
+    )
+
+    assert outcome.reason == "flood_mute"
+    assert second.reason == "flood_mute"
+    assert ("10001", "mute:20001:45") in sender.group_messages
+    assert ("10001", "mute:20001:90") in sender.group_messages
+    assert "近期累计违规 2 次" in sender.group_messages[-1][1]
+
+
 async def test_group_increase_notice_sends_welcome(settings, repo, message_router, sender):
     await repo.update_group_moderation_config(
         "10001",
@@ -594,6 +628,27 @@ async def test_admin_qq_ids_can_run_admin_lite_commands(repo, message_router, se
     assert audit_logs[0].action == "warn"
     assert audit_logs[0].actor_user_id == "20001"
     assert audit_logs[0].actor_role == "super_admin"
+
+
+async def test_admin_warn_records_target_violation_count(repo, message_router, sender):
+    message_router.settings.admin_qq_ids_raw = "20001"
+    first_event = normalize_group_message(
+        group_event("/warn [CQ:at,qq=20002] 刷屏", message_id=26),
+        message_router.settings,
+    )
+    second_event = normalize_group_message(
+        group_event("/warn [CQ:at,qq=20002] 继续刷屏", message_id=27),
+        message_router.settings,
+    )
+
+    await message_router.handle(first_event, repo, sender)
+    await message_router.handle(second_event, repo, sender)
+
+    assert sender.group_messages[-1] == ("10001", "已记录警告：[CQ:at,qq=20002] 继续刷屏，近期累计违规 2 次")
+    audit_logs = await repo.recent_audit_logs()
+    assert audit_logs[0].action == "warn"
+    assert audit_logs[0].target_id == "20002"
+    assert '"violation_count": 2' in audit_logs[0].detail_json
 
 
 async def test_runtime_admin_qq_ids_from_admin_settings(settings, repo, message_router, sender):

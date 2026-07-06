@@ -75,6 +75,10 @@ class GroupModerationConfig:
     flood_message_count: int = 6
     flood_window_seconds: int = 10
     flood_mute_seconds: int = 60
+    violation_window_hours: int = 24
+    escalation_enabled: bool = False
+    escalation_multiplier: int = 2
+    escalation_max_mute_seconds: int = 3600
 
 
 @dataclass(slots=True)
@@ -174,6 +178,16 @@ class Repository:
             ),
             flood_mute_seconds=max(
                 10, min(int(moderation.get("flood_mute_seconds") or 60), 3600)
+            ),
+            violation_window_hours=max(
+                1, min(int(moderation.get("violation_window_hours") or 24), 168)
+            ),
+            escalation_enabled=bool(moderation.get("escalation_enabled", False)),
+            escalation_multiplier=max(
+                1, min(int(moderation.get("escalation_multiplier") or 2), 5)
+            ),
+            escalation_max_mute_seconds=max(
+                10, min(int(moderation.get("escalation_max_mute_seconds") or 3600), 86400)
             ),
         )
 
@@ -1063,6 +1077,57 @@ class Repository:
             )
         )
         return count or 0
+
+    async def moderation_violation_count(
+        self,
+        *,
+        group_id: str,
+        user_id: str,
+        since: datetime,
+    ) -> int:
+        count = await self.session.scalar(
+            select(func.count(AuditLog.id)).where(
+                AuditLog.group_id == group_id,
+                AuditLog.target_type == "user",
+                AuditLog.target_id == user_id,
+                AuditLog.action.in_(["warn", "mute", "flood_mute"]),
+                AuditLog.created_at >= since,
+            )
+        )
+        return count or 0
+
+    async def moderation_violation_summary(
+        self,
+        *,
+        group_id: str,
+        since: datetime,
+        limit: int = 5,
+    ) -> list[dict[str, Any]]:
+        result = await self.session.execute(
+            select(
+                AuditLog.target_id,
+                func.count(AuditLog.id).label("violation_count"),
+                func.max(AuditLog.created_at).label("last_violation_at"),
+            )
+            .where(
+                AuditLog.group_id == group_id,
+                AuditLog.target_type == "user",
+                AuditLog.target_id != "",
+                AuditLog.action.in_(["warn", "mute", "flood_mute"]),
+                AuditLog.created_at >= since,
+            )
+            .group_by(AuditLog.target_id)
+            .order_by(text("violation_count DESC"), text("last_violation_at DESC"))
+            .limit(limit)
+        )
+        return [
+            {
+                "user_id": str(row.target_id),
+                "violation_count": int(row.violation_count or 0),
+                "last_violation_at": row.last_violation_at,
+            }
+            for row in result.all()
+        ]
 
     async def audit(
         self,

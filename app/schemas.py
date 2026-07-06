@@ -33,6 +33,10 @@ class GroupUpdate(BaseModel):
     flood_message_count: int | None = Field(default=None, ge=3, le=50)
     flood_window_seconds: int | None = Field(default=None, ge=3, le=300)
     flood_mute_seconds: int | None = Field(default=None, ge=10, le=3600)
+    violation_window_hours: int | None = Field(default=None, ge=1, le=168)
+    escalation_enabled: bool | None = None
+    escalation_multiplier: int | None = Field(default=None, ge=1, le=5)
+    escalation_max_mute_seconds: int | None = Field(default=None, ge=10, le=86400)
 
     @field_validator("reply_mode")
     @classmethod
@@ -59,6 +63,16 @@ class GroupModerationConfigOut(BaseModel):
     flood_message_count: int
     flood_window_seconds: int
     flood_mute_seconds: int
+    violation_window_hours: int
+    escalation_enabled: bool
+    escalation_multiplier: int
+    escalation_max_mute_seconds: int
+
+
+class ModerationStatOut(BaseModel):
+    user_id: str
+    violation_count: int
+    last_violation_at: str
 
 
 class SkillSettingOut(BaseModel):
@@ -90,6 +104,7 @@ class GroupDetailOut(BaseModel):
     reply_mode: str
     moderation: GroupModerationConfigOut
     overview: dict[str, int]
+    moderation_stats: list[ModerationStatOut]
     skills: list[SkillSettingOut]
 
 

@@ -218,13 +218,13 @@ def build_report(project_dir: Path) -> dict[str, Any]:
             "moderation",
             [
                 Evidence("app/skills.py", ("banword", "mute", "unmute")),
-                Evidence("app/router.py", ("welcome_new_member", "flood_mute")),
+                Evidence("app/router.py", ("welcome_new_member", "flood_mute", "escalation_enabled")),
                 Evidence("web-admin/src/views/KeywordRulesView.vue", ("/keyword-rules", "keyword", "response")),
-                Evidence("web-admin/src/views/GroupsView.vue", ("welcome_message", "flood_message_count", "flood_mute_seconds")),
-                Evidence("tests/test_router.py", ("test_admin_can_mute_and_unmute_user", "test_flood_control_mutes_normal_user")),
-                Evidence("tests/test_admin_api.py", ("welcome_enabled", "flood_enabled")),
+                Evidence("web-admin/src/views/GroupsView.vue", ("近期违规", "escalation_enabled", "violation_window_hours")),
+                Evidence("tests/test_router.py", ("test_admin_can_mute_and_unmute_user", "test_flood_control_escalates_repeat_violations")),
+                Evidence("tests/test_admin_api.py", ("welcome_enabled", "escalation_enabled")),
             ],
-            message="Warnings, keyword rules, mute/unmute, welcome, flood control, permission and audit evidence.",
+            message="Warnings, keyword rules, mute/unmute, welcome, flood control, escalation, permission and audit evidence.",
         ),
         check_evidence(
             project_dir,

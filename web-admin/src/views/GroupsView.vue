@@ -108,10 +108,31 @@
         <el-form-item label="禁言秒数">
           <el-input-number v-model="moderationForm.flood_mute_seconds" :min="10" :max="3600" />
         </el-form-item>
+        <el-form-item label="累计窗口小时">
+          <el-input-number v-model="moderationForm.violation_window_hours" :min="1" :max="168" />
+        </el-form-item>
+        <el-form-item label="阶梯处罚">
+          <el-switch v-model="moderationForm.escalation_enabled" />
+        </el-form-item>
+        <el-form-item label="处罚倍率">
+          <el-input-number v-model="moderationForm.escalation_multiplier" :min="1" :max="5" />
+        </el-form-item>
+        <el-form-item label="禁言封顶秒">
+          <el-input-number v-model="moderationForm.escalation_max_mute_seconds" :min="10" :max="86400" />
+        </el-form-item>
         <el-form-item>
           <el-button type="primary" :loading="savingModeration" @click="saveModeration">保存群管配置</el-button>
         </el-form-item>
       </el-form>
+
+      <h3 class="section-title">近期违规</h3>
+      <el-table :data="groupDetail.moderation_stats" border>
+        <el-table-column prop="user_id" label="用户 QQ" min-width="140" />
+        <el-table-column prop="violation_count" label="累计次数" width="110" />
+        <el-table-column label="最近时间" width="190">
+          <template #default="{ row }">{{ formatTime(row.last_violation_at) }}</template>
+        </el-table-column>
+      </el-table>
 
       <h3 class="section-title">本群 Skill 开关</h3>
       <el-table :data="groupDetail.skills" border>
@@ -160,8 +181,17 @@ type GroupDetail = GroupRow & {
     flood_message_count: number
     flood_window_seconds: number
     flood_mute_seconds: number
+    violation_window_hours: number
+    escalation_enabled: boolean
+    escalation_multiplier: number
+    escalation_max_mute_seconds: number
   }
   overview: Record<string, number>
+  moderation_stats: Array<{
+    user_id: string
+    violation_count: number
+    last_violation_at: string
+  }>
   skills: SkillSetting[]
 }
 
@@ -184,7 +214,11 @@ const moderationForm = reactive({
   flood_enabled: false,
   flood_message_count: 6,
   flood_window_seconds: 10,
-  flood_mute_seconds: 60
+  flood_mute_seconds: 60,
+  violation_window_hours: 24,
+  escalation_enabled: false,
+  escalation_multiplier: 2,
+  escalation_max_mute_seconds: 3600
 })
 
 const overviewItems = [
@@ -294,6 +328,11 @@ function replyModeText(value: string) {
     disabled: '禁用'
   }
   return labels[value] || value
+}
+
+function formatTime(value: string) {
+  if (!value) return '-'
+  return value.replace('T', ' ').slice(0, 19)
 }
 
 async function createGroup() {

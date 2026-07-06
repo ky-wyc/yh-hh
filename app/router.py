@@ -318,10 +318,27 @@ class MessageRouter:
         if count < config.flood_message_count:
             return None
 
+        violation_since = now_utc() - timedelta(hours=config.violation_window_hours)
+        previous_violations = await repo.moderation_violation_count(
+            group_id=event.group_id,
+            user_id=event.user_id,
+            since=violation_since,
+        )
+        violation_count = previous_violations + 1
+        mute_seconds = config.flood_mute_seconds
+        if config.escalation_enabled:
+            mute_seconds = min(
+                config.escalation_max_mute_seconds,
+                config.flood_mute_seconds
+                * (config.escalation_multiplier ** max(0, previous_violations)),
+            )
+
         try:
             if hasattr(sender, "mute_user"):
-                await sender.mute_user(event.group_id, event.user_id, config.flood_mute_seconds)
-            text = f"检测到刷屏，已临时禁言 {config.flood_mute_seconds} 秒。"
+                await sender.mute_user(event.group_id, event.user_id, mute_seconds)
+            text = f"检测到刷屏，已临时禁言 {mute_seconds} 秒。"
+            if config.escalation_enabled and previous_violations > 0:
+                text += f" 近期累计违规 {violation_count} 次。"
             await sender.send_group_message(event.group_id, text)
         except Exception as exc:
             await repo.mark_message(message_log, "error", f"flood_mute_failed:{type(exc).__name__}")
@@ -336,7 +353,10 @@ class MessageRouter:
             detail={
                 "message_count": count,
                 "window_seconds": config.flood_window_seconds,
-                "mute_seconds": config.flood_mute_seconds,
+                "mute_seconds": mute_seconds,
+                "base_mute_seconds": config.flood_mute_seconds,
+                "violation_count": violation_count,
+                "escalation_enabled": config.escalation_enabled,
             },
         )
         await repo.save_reply(
