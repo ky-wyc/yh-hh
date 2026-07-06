@@ -8,6 +8,11 @@ from starlette.websockets import WebSocketDisconnect
 
 from app.config import Settings
 from app.main import create_app
+from app.models import now_utc
+
+
+def test_database_timestamp_defaults_are_timezone_naive_utc():
+    assert now_utc().tzinfo is None
 
 
 def test_admin_login_and_health(tmp_path):

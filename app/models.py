@@ -9,7 +9,7 @@ from app.db import Base
 
 
 def now_utc() -> datetime:
-    return datetime.now(UTC)
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 class User(Base):
