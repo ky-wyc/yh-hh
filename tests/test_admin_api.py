@@ -11,6 +11,7 @@ from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from app.config import Settings
+from app.image_generation import ImageResult
 from app.main import create_app
 from app.models import now_utc
 
@@ -197,6 +198,65 @@ def test_embedding_settings_can_be_managed_and_mask_api_key(tmp_path):
         assert cleared.json()["api_key_configured"] is False
 
 
+def test_image_settings_can_be_managed_and_tested_without_leaking_key(tmp_path):
+    settings = Settings(
+        DATABASE_URL=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",
+        REDIS_URL="",
+        ADMIN_USERNAME="admin",
+        ADMIN_PASSWORD="secret",
+        IMAGE_API_KEY="image-secret",
+    )
+    app = create_app(settings)
+
+    class FakeImageService:
+        async def generate(self, config, prompt: str):
+            assert config.model == "image2"
+            assert prompt == "cat"
+            return ImageResult(
+                message="已生成图片：\n[CQ:image,file=https://img.example/cat.png]",
+                model=config.model,
+                url="https://img.example/cat.png",
+            )
+
+    app.state.image = FakeImageService()
+
+    with TestClient(app) as client:
+        token = client.post(
+            "/api/auth/login", json={"username": "admin", "password": "secret"}
+        ).json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        current = client.get("/api/settings/image", headers=headers)
+        assert current.status_code == 200
+        assert current.json()["api_key_configured"] is True
+        assert "image-secret" not in str(current.json())
+
+        updated = client.patch(
+            "/api/settings/image",
+            json={
+                "provider": "openai_compatible",
+                "base_url": "https://image.example/v1",
+                "api_key": "new-image-secret",
+                "model": "image2",
+                "size": "1024x1024",
+                "timeout_seconds": 90,
+            },
+            headers=headers,
+        )
+        assert updated.status_code == 200
+        payload = updated.json()
+        assert payload["base_url"] == "https://image.example/v1"
+        assert payload["model"] == "image2"
+        assert payload["size"] == "1024x1024"
+        assert payload["api_key_configured"] is True
+        assert "new-image-secret" not in str(payload)
+
+        tested = client.post("/api/settings/image/test", json={"prompt": "cat"}, headers=headers)
+        assert tested.status_code == 200
+        assert tested.json()["status"] == "success"
+        assert tested.json()["url"] == "https://img.example/cat.png"
+
+
 def test_embedding_settings_local_test_does_not_require_api_key(tmp_path):
     settings = Settings(
         DATABASE_URL=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",
@@ -381,6 +441,8 @@ def test_bot_settings_can_update_runtime_operation_fields(tmp_path):
                 "private_chat_whitelist": "20001, 20003",
                 "rate_limit_per_user_per_minute": 20,
                 "rate_limit_per_group_per_minute": 120,
+                "memory_summary_by_count_enabled": True,
+                "memory_summary_message_threshold": 25,
             },
             headers=headers,
         )
@@ -395,6 +457,8 @@ def test_bot_settings_can_update_runtime_operation_fields(tmp_path):
         assert payload["private_chat_whitelist"] == "20001,20003"
         assert payload["rate_limit_per_user_per_minute"] == 20
         assert payload["rate_limit_per_group_per_minute"] == 120
+        assert payload["memory_summary_by_count_enabled"] is True
+        assert payload["memory_summary_message_threshold"] == 25
 
 
 def test_bot_settings_reject_invalid_values(tmp_path):
@@ -437,12 +501,18 @@ def test_bot_settings_reject_invalid_values(tmp_path):
             json={"rate_limit_per_user_per_minute": 0},
             headers=headers,
         )
+        invalid_memory_threshold = client.patch(
+            "/api/settings/bot",
+            json={"memory_summary_message_threshold": 9},
+            headers=headers,
+        )
 
         assert invalid_mode.status_code == 422
         assert invalid_prefix.status_code == 422
         assert invalid_admin_ids.status_code == 422
         assert invalid_private_whitelist.status_code == 422
         assert invalid_rate_limit.status_code == 422
+        assert invalid_memory_threshold.status_code == 422
 
 
 def test_keyword_rules_can_be_managed_from_admin(tmp_path):
@@ -726,12 +796,12 @@ def test_knowledge_import_splits_large_xlsx_into_multiple_documents(tmp_path):
 
         assert imported.status_code == 200
         payload = imported.json()
-        assert payload["source_document_count"] == 3
-        assert payload["total"] == 3
+        assert payload["source_document_count"] == 5
+        assert payload["total"] == 5
         assert payload["report"]["imported_row_count"] == 205
-        assert payload["report"]["document_count"] == 3
+        assert payload["report"]["document_count"] == 5
         titles = [item["title"] for item in payload["documents"]]
-        assert titles[0].endswith("rows 2-101")
+        assert titles[0].endswith("rows 2-51")
         assert titles[-1].endswith("rows 202-206")
         assert "SKU-205" in payload["documents"][-1]["content"]
 

@@ -140,6 +140,9 @@ def test_preflight_rejects_invalid_runtime_settings(tmp_path):
         LLM_TEMPERATURE="9",
         LLM_MAX_TOKENS="0",
         LLM_TIMEOUT_SECONDS="fast",
+        IMAGE_TIMEOUT_SECONDS="slow",
+        IMAGE_SIZE="large",
+        MEMORY_SUMMARY_MESSAGE_THRESHOLD="9",
         RATE_LIMIT_PER_USER_PER_MINUTE="0",
         RATE_LIMIT_PER_GROUP_PER_MINUTE="many",
     )
@@ -152,6 +155,9 @@ def test_preflight_rejects_invalid_runtime_settings(tmp_path):
     assert "LLM_TEMPERATURE must be between 0 and 2" in errors
     assert "LLM_MAX_TOKENS must be between 1 and 32000" in errors
     assert "LLM_TIMEOUT_SECONDS must be a number" in errors
+    assert "IMAGE_TIMEOUT_SECONDS must be a number" in errors
+    assert "IMAGE_SIZE must look like 1024x1024" in errors
+    assert "MEMORY_SUMMARY_MESSAGE_THRESHOLD must be between 10 and 5000" in errors
     assert "RATE_LIMIT_PER_USER_PER_MINUTE must be between 1 and 10000" in errors
     assert "RATE_LIMIT_PER_GROUP_PER_MINUTE must be an integer" in errors
 

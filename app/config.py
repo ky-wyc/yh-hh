@@ -54,8 +54,17 @@ class Settings(BaseSettings):
     embedding_dimensions: int = Field(default=64, alias="EMBEDDING_DIMENSIONS")
     embedding_timeout_seconds: float = Field(default=30, alias="EMBEDDING_TIMEOUT_SECONDS")
 
+    image_provider: str = Field(default="openai_compatible", alias="IMAGE_PROVIDER")
+    image_base_url: str = Field(default="https://api.openai.com/v1", alias="IMAGE_BASE_URL")
+    image_api_key: str = Field(default="", alias="IMAGE_API_KEY")
+    image_model: str = Field(default="image2", alias="IMAGE_MODEL")
+    image_size: str = Field(default="1024x1024", alias="IMAGE_SIZE")
+    image_timeout_seconds: float = Field(default=120, alias="IMAGE_TIMEOUT_SECONDS")
+
     rate_limit_per_user_per_minute: int = Field(default=12, alias="RATE_LIMIT_PER_USER_PER_MINUTE")
     rate_limit_per_group_per_minute: int = Field(default=60, alias="RATE_LIMIT_PER_GROUP_PER_MINUTE")
+    memory_summary_by_count_enabled: bool = Field(default=False, alias="MEMORY_SUMMARY_BY_COUNT_ENABLED")
+    memory_summary_message_threshold: int = Field(default=100, alias="MEMORY_SUMMARY_MESSAGE_THRESHOLD")
 
     @property
     def bot_nicknames(self) -> list[str]:

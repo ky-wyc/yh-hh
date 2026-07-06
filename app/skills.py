@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
 
+from app.image_generation import ImageGenerationService
 from app.llm import LLMService
 from app.models import now_utc
 from app.repository import Repository
@@ -58,6 +59,18 @@ SKILL_CATALOG: dict[str, dict[str, Any]] = {
         "requires_admin": False,
         "uses_llm": True,
         "uses_knowledge": True,
+        "uses_memory": False,
+        "private_supported": True,
+    },
+    "image": {
+        "display_name": "生图",
+        "description": "使用独立生图模型生成图片。",
+        "category": "AI",
+        "commands": ["image", "draw"],
+        "risk_level": "medium",
+        "requires_admin": False,
+        "uses_llm": True,
+        "uses_knowledge": False,
         "uses_memory": False,
         "private_supported": True,
     },
@@ -120,6 +133,8 @@ COMMAND_SKILLS: dict[str, str] = {
     "ping": "ping",
     "ai": "ai",
     "kb": "kb",
+    "image": "image",
+    "draw": "image",
     "dice": "dice",
     "guess": "guess",
     "remember": "memory",
@@ -135,6 +150,7 @@ COMMAND_SKILLS: dict[str, str] = {
 class SkillContext:
     repo: Repository
     llm: LLMService
+    image: ImageGenerationService
     group_id: str
     user_id: str
     message_id: str = ""
@@ -152,12 +168,15 @@ class SkillResult:
 
 
 class SkillRegistry:
-    def __init__(self):
+    def __init__(self, image: ImageGenerationService | None = None):
+        self.image = image or ImageGenerationService()
         self._handlers = {
             "help": self.help,
             "ping": self.ping,
             "ai": self.ai,
             "kb": self.kb,
+            "image": self.image_generate,
+            "draw": self.image_generate,
             "dice": self.dice,
             "guess": self.guess,
             "remember": self.remember,
@@ -200,6 +219,8 @@ class SkillRegistry:
             lines.append(f"{prefix}ai 问题 - 向大模型提问")
         if "kb" in enabled:
             lines.append(f"{prefix}kb 问题 - 查询知识库")
+        if "image" in enabled:
+            lines.append(f"{prefix}image 提示词 - 生成图片")
         if "dice" in enabled:
             lines.append(f"{prefix}dice 或 {prefix}dice 2d6 - 掷骰子")
         if "guess" in enabled:
@@ -278,6 +299,16 @@ class SkillRegistry:
                 snippet = snippet[:220].rstrip() + "..."
             lines.append(f"{index}. [{item.source}] {snippet}")
         return SkillResult(text="\n".join(lines), skill_name="kb")
+
+    async def image_generate(self, args: str, ctx: SkillContext) -> SkillResult:
+        prompt = args.strip()
+        if not prompt:
+            return SkillResult(text=f"用法：{ctx.command_prefix}image 图片提示词", skill_name="image")
+        if len(prompt) > 1000:
+            return SkillResult(text="图片提示词太长，请控制在 1000 字以内。", skill_name="image")
+        config = await ctx.repo.get_image_config()
+        result = await self.image.generate(config, prompt)
+        return SkillResult(text=result.message, skill_name="image", llm_model=result.model)
 
     async def dice(self, args: str, ctx: SkillContext) -> SkillResult:
         spec = args.strip().lower() or "1d6"

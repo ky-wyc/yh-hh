@@ -7,9 +7,11 @@ from typing import Any
 from app.cache import RateLimitExceeded
 from app.config import Settings
 from app.events import BotEvent, GroupNoticeEvent
+from app.image_generation import ImageGenerationService
 from app.llm import LLMService
 from app.models import now_utc
 from app.repository import Repository
+from app.scheduler import maybe_create_memory_summary_by_count
 from app.skills import PRIVATE_SUPPORTED_SKILLS, SkillContext, SkillRegistry
 
 
@@ -23,11 +25,18 @@ class RouteOutcome:
 
 
 class MessageRouter:
-    def __init__(self, settings: Settings, llm: LLMService, rate_limiter):
+    def __init__(
+        self,
+        settings: Settings,
+        llm: LLMService,
+        rate_limiter,
+        image: ImageGenerationService | None = None,
+    ):
         self.settings = settings
         self.llm = llm
+        self.image = image or ImageGenerationService()
         self.rate_limiter = rate_limiter
-        self.skills = SkillRegistry()
+        self.skills = SkillRegistry(self.image)
 
     async def handle(self, event: BotEvent, repo: Repository, sender) -> RouteOutcome:
         if event.message_type == "private":
@@ -93,6 +102,22 @@ class MessageRouter:
             event.group_id,
             f"{event.nickname or event.user_id}: {event.text}",
         )
+        if bot_settings.memory_summary_by_count_enabled:
+            try:
+                await maybe_create_memory_summary_by_count(
+                    repo,
+                    self.llm,
+                    event.group_id,
+                    bot_settings.memory_summary_message_threshold,
+                )
+            except Exception as exc:
+                await repo.audit(
+                    action="memory_summary_count_failed",
+                    group_id=event.group_id,
+                    target_type="memory",
+                    result="failed",
+                    detail={"error": str(exc)[:500]},
+                )
 
         command = self._parse_command(event.text, bot_settings.command_prefix)
         if command:
@@ -126,6 +151,7 @@ class MessageRouter:
                 SkillContext(
                     repo=repo,
                     llm=self.llm,
+                    image=self.image,
                     group_id=event.group_id,
                     user_id=event.user_id,
                     message_id=event.message_id,
@@ -342,6 +368,7 @@ class MessageRouter:
                 SkillContext(
                     repo=repo,
                     llm=self.llm,
+                    image=self.image,
                     group_id="",
                     user_id=event.user_id,
                     message_id=event.message_id,

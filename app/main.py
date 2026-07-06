@@ -14,6 +14,7 @@ from app.config import Settings, get_settings
 from app.db import create_engine, create_session_factory, init_db
 from app.embedding import EmbeddingService
 from app.events import normalize_group_message, normalize_group_notice, normalize_private_message
+from app.image_generation import ImageGenerationService
 from app.llm import LLMService
 from app.onebot import OneBotConnectionManager, websocket_event_stream
 from app.repository import Repository
@@ -35,7 +36,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         configure_logging()
         await init_db(app.state.engine)
         app.state.rate_limiter = await create_rate_limiter(settings.redis_url)
-        app.state.message_router = MessageRouter(settings, app.state.llm, app.state.rate_limiter)
+        app.state.message_router = MessageRouter(
+            settings,
+            app.state.llm,
+            app.state.rate_limiter,
+            app.state.image,
+        )
         app.state.task_scheduler = TaskScheduler(
             session_factory=app.state.session_factory,
             settings=settings,
@@ -65,6 +71,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.session_factory = create_session_factory(app.state.engine)
     app.state.onebot = OneBotConnectionManager()
     app.state.llm = LLMService()
+    app.state.image = ImageGenerationService()
     app.state.embedding = EmbeddingService()
     app.state.token_store = TokenStore()
 

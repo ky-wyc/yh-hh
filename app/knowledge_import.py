@@ -10,9 +10,9 @@ from openpyxl import load_workbook
 
 
 SUPPORTED_EXTENSIONS = {".txt", ".md", ".csv", ".xlsx", ".xlsm"}
-MAX_IMPORT_BYTES = 5 * 1024 * 1024
+MAX_IMPORT_BYTES = 25 * 1024 * 1024
 MAX_DOCUMENT_CHARS = 20_000
-ROWS_PER_DOCUMENT = 100
+ROWS_PER_DOCUMENT = 50
 
 
 @dataclass(slots=True)
@@ -46,7 +46,7 @@ class ImportedKnowledge:
 
 def parse_imported_knowledge(filename: str, data: bytes, title: str = "") -> ImportedKnowledge:
     if len(data) > MAX_IMPORT_BYTES:
-        raise ValueError("file is larger than 5MB")
+        raise ValueError("file is larger than 25MB")
     suffix = PurePath(filename or "").suffix.lower()
     if suffix not in SUPPORTED_EXTENSIONS:
         raise ValueError("unsupported knowledge file type")

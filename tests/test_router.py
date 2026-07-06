@@ -6,6 +6,7 @@ import httpx
 
 from app.cache import MemoryRateLimiter
 from app.events import normalize_group_message, normalize_group_notice, normalize_private_message
+from app.image_generation import ImageResult
 from app.llm import LLMService
 from app.models import User
 from app.repository import Repository
@@ -79,6 +80,57 @@ async def test_ping_replies_without_llm(settings, repo, message_router, sender):
     assert outcome.replied is True
     assert sender.group_messages == [("10001", "pong")]
     assert outcome.skill_name == "ping"
+
+
+async def test_image_command_uses_image_generation_service(settings, repo, message_router, sender):
+    class FakeImageService:
+        async def generate(self, config, prompt: str):
+            assert prompt == "cat avatar"
+            assert config.model == "image2"
+            return ImageResult(
+                message="已生成图片：\n[CQ:image,file=https://img.example/cat.png]",
+                model=config.model,
+                url="https://img.example/cat.png",
+            )
+
+    message_router.image = FakeImageService()
+    message_router.skills.image = message_router.image
+    await repo.update_image_config({"api_key": "image-secret", "model": "image2"})
+    event = normalize_group_message(group_event("/image cat avatar"), settings)
+
+    outcome = await message_router.handle(event, repo, sender)
+
+    assert outcome.replied is True
+    assert outcome.skill_name == "image"
+    assert sender.group_messages == [
+        ("10001", "已生成图片：\n[CQ:image,file=https://img.example/cat.png]")
+    ]
+
+
+async def test_message_count_memory_summary_creates_pending_memory(settings, repo, message_router, sender):
+    await repo.update_bot_settings(
+        {
+            "memory_summary_by_count_enabled": True,
+            "memory_summary_message_threshold": 10,
+        }
+    )
+
+    for index in range(1, 11):
+        event = normalize_group_message(
+            group_event(
+                f"Project preference message {index}",
+                message_id=index,
+                user_id=f"200{index:02d}",
+            ),
+            settings,
+        )
+        await message_router.handle(event, repo, sender)
+
+    memories = await repo.list_memories_for_admin(status="pending", group_id="10001")
+    assert len(memories) == 1
+    assert memories[0].source == "auto_chat_count_summary"
+    assert memories[0].status == "pending"
+    assert "Project preference message" in memories[0].content
 
 
 async def test_private_message_requires_enabled_whitelist(settings, repo, message_router, sender):

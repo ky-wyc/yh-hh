@@ -59,6 +59,62 @@
     </el-alert>
   </el-card>
 
+  <h2 class="page-title section-title">生图模型设置</h2>
+  <el-card>
+    <el-form label-width="130px">
+      <el-form-item label="Provider">
+        <el-select v-model="imageForm.provider">
+          <el-option label="OpenAI Compatible" value="openai_compatible" />
+        </el-select>
+      </el-form-item>
+      <el-form-item label="Base URL">
+        <el-input v-model="imageForm.base_url" />
+      </el-form-item>
+      <el-form-item label="API Key">
+        <el-input v-model="imageForm.api_key" placeholder="留空则不修改" show-password />
+        <span class="field-hint">
+          {{ imageForm.api_key_configured ? '当前已配置' : '当前未配置' }}
+        </span>
+      </el-form-item>
+      <el-form-item label="生图模型">
+        <el-input v-model="imageForm.model" placeholder="例如 image2" />
+      </el-form-item>
+      <el-form-item label="图片尺寸">
+        <el-input v-model="imageForm.size" placeholder="例如 1024x1024" />
+      </el-form-item>
+      <el-form-item label="超时秒数">
+        <el-input-number v-model="imageForm.timeout_seconds" :min="1" :max="300" />
+      </el-form-item>
+      <el-form-item label="测试提示词">
+        <el-input
+          v-model="imageTestPrompt"
+          type="textarea"
+          :rows="2"
+          maxlength="500"
+          show-word-limit
+        />
+      </el-form-item>
+      <el-form-item>
+        <el-button type="primary" :loading="imageSaving" @click="saveImage">保存生图设置</el-button>
+        <el-button :loading="imageTesting" @click="testImage">测试生图</el-button>
+        <el-button type="danger" plain :loading="imageClearingKey" @click="clearImageApiKey">
+          清空 API Key
+        </el-button>
+      </el-form-item>
+    </el-form>
+    <el-alert
+      v-if="imageTestResult"
+      class="test-result"
+      :type="imageTestResult.status === 'success' ? 'success' : 'warning'"
+      :title="`测试结果：${imageTestResult.status}`"
+      :closable="false"
+      show-icon
+    >
+      <p class="result-meta">模型：{{ imageTestResult.model || '-' }}</p>
+      <p class="result-text">{{ imageTestResult.message }}</p>
+    </el-alert>
+  </el-card>
+
   <h2 class="page-title section-title">知识库 Embedding 设置</h2>
   <el-card>
     <el-form label-width="130px">
@@ -180,6 +236,13 @@
       <el-form-item label="群限流/分钟">
         <el-input-number v-model="botForm.rate_limit_per_group_per_minute" :min="1" :max="3000" />
       </el-form-item>
+      <el-form-item label="按消息数总结">
+        <el-switch v-model="botForm.memory_summary_by_count_enabled" />
+        <span class="field-hint">达到阈值后生成待审批长期记忆。</span>
+      </el-form-item>
+      <el-form-item label="总结消息阈值">
+        <el-input-number v-model="botForm.memory_summary_message_threshold" :min="10" :max="5000" />
+      </el-form-item>
       <el-button type="primary" :loading="botSaving" @click="saveBot">保存运营设置</el-button>
     </el-form>
   </el-card>
@@ -193,6 +256,7 @@ import { api } from '../api'
 const form = reactive<any>({})
 const botForm = reactive<any>({})
 const embeddingForm = reactive<any>({})
+const imageForm = reactive<any>({})
 const saving = ref(false)
 const testing = ref(false)
 const clearingKey = ref(false)
@@ -200,6 +264,9 @@ const botSaving = ref(false)
 const embeddingSaving = ref(false)
 const embeddingTesting = ref(false)
 const embeddingClearingKey = ref(false)
+const imageSaving = ref(false)
+const imageTesting = ref(false)
+const imageClearingKey = ref(false)
 const testPrompt = ref('请回复 pong')
 const testResult = ref<{ status: string; model: string; text: string } | null>(null)
 const embeddingTestText = ref('部署 preflight 检查')
@@ -211,16 +278,25 @@ const embeddingTestResult = ref<{
   actual_dimensions: number
   error: string
 } | null>(null)
+const imageTestPrompt = ref('一只可爱的猫，头像风格')
+const imageTestResult = ref<{
+  status: string
+  model: string
+  message: string
+  url: string
+} | null>(null)
 
 async function load() {
-  const [{ data: llm }, { data: bot }, { data: embedding }] = await Promise.all([
+  const [{ data: llm }, { data: bot }, { data: embedding }, { data: image }] = await Promise.all([
     api.get('/settings/llm'),
     api.get('/settings/bot'),
-    api.get('/settings/embedding')
+    api.get('/settings/embedding'),
+    api.get('/settings/image')
   ])
   Object.assign(form, llm, { api_key: '' })
   Object.assign(botForm, bot)
   Object.assign(embeddingForm, embedding, { api_key: '' })
+  Object.assign(imageForm, image, { api_key: '' })
 }
 
 async function save() {
@@ -276,6 +352,62 @@ async function clearApiKey() {
     ElMessage.error(error?.response?.data?.detail || '清空 API Key 失败')
   } finally {
     clearingKey.value = false
+  }
+}
+
+async function saveImage() {
+  const payload = { ...imageForm }
+  if (!payload.api_key) delete payload.api_key
+  imageSaving.value = true
+  try {
+    await api.patch('/settings/image', payload)
+    ElMessage.success('已保存生图设置')
+    await load()
+  } catch (error: any) {
+    ElMessage.error(error?.response?.data?.detail || '保存生图设置失败')
+  } finally {
+    imageSaving.value = false
+  }
+}
+
+async function testImage() {
+  imageTesting.value = true
+  imageTestResult.value = null
+  try {
+    const { data } = await api.post('/settings/image/test', { prompt: imageTestPrompt.value })
+    imageTestResult.value = data
+    if (data.status === 'success') {
+      ElMessage.success('生图测试成功')
+    } else {
+      ElMessage.warning('生图测试未成功，请查看结果')
+    }
+  } catch (error: any) {
+    ElMessage.error(error?.response?.data?.detail || '生图测试失败')
+  } finally {
+    imageTesting.value = false
+  }
+}
+
+async function clearImageApiKey() {
+  try {
+    await ElMessageBox.confirm('清空后生图功能会不可用，直到重新保存新的 API Key。', '清空生图 API Key', {
+      type: 'warning',
+      confirmButtonText: '清空',
+      cancelButtonText: '取消'
+    })
+  } catch {
+    return
+  }
+
+  imageClearingKey.value = true
+  try {
+    await api.patch('/settings/image', { api_key: '' })
+    ElMessage.success('已清空生图 API Key')
+    await load()
+  } catch (error: any) {
+    ElMessage.error(error?.response?.data?.detail || '清空生图 API Key 失败')
+  } finally {
+    imageClearingKey.value = false
   }
 }
 
@@ -338,7 +470,7 @@ async function clearEmbeddingApiKey() {
 async function saveBot() {
   botSaving.value = true
   try {
-    const numericCsvFields = ['admin_qq_ids', 'allowed_groups']
+    const numericCsvFields = ['admin_qq_ids', 'allowed_groups', 'private_chat_whitelist']
     for (const field of numericCsvFields) {
       const value = String(botForm[field] || '').trim()
       if (value && !/^(\d+)(,\s*\d+)*$/.test(value)) {

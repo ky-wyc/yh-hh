@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import re
 from urllib.parse import urlparse
 from typing import Any
 
@@ -637,6 +638,8 @@ class BotSettingsOut(BaseModel):
     private_chat_whitelist: str
     rate_limit_per_user_per_minute: int
     rate_limit_per_group_per_minute: int
+    memory_summary_by_count_enabled: bool
+    memory_summary_message_threshold: int
 
 
 class BotSettingsUpdate(BaseModel):
@@ -651,6 +654,8 @@ class BotSettingsUpdate(BaseModel):
     private_chat_whitelist: str | None = None
     rate_limit_per_user_per_minute: int | None = Field(default=None, ge=1, le=600)
     rate_limit_per_group_per_minute: int | None = Field(default=None, ge=1, le=3000)
+    memory_summary_by_count_enabled: bool | None = None
+    memory_summary_message_threshold: int | None = Field(default=None, ge=10, le=5000)
 
     @field_validator("default_reply_mode")
     @classmethod
@@ -759,6 +764,70 @@ class LLMSettingsUpdate(BaseModel):
 
 class LLMTestRequest(BaseModel):
     prompt: str = "ping"
+
+
+class ImageSettingsOut(BaseModel):
+    provider: str
+    base_url: str
+    model: str
+    size: str
+    timeout_seconds: float
+    api_key_configured: bool
+
+
+class ImageSettingsUpdate(BaseModel):
+    provider: str | None = None
+    base_url: str | None = None
+    api_key: str | None = Field(default=None)
+    model: str | None = None
+    size: str | None = None
+    timeout_seconds: float | None = Field(default=None, ge=1, le=300)
+
+    @field_validator("provider")
+    @classmethod
+    def validate_image_provider(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        stripped = value.strip()
+        if stripped != "openai_compatible":
+            raise ValueError("provider must be openai_compatible")
+        return stripped
+
+    @field_validator("model")
+    @classmethod
+    def validate_image_model(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("model must not be empty")
+        return value.strip() if value is not None else value
+
+    @field_validator("size")
+    @classmethod
+    def validate_image_size(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        stripped = value.strip()
+        if not re.fullmatch(r"\d{2,5}x\d{2,5}", stripped):
+            raise ValueError("size must look like 1024x1024")
+        return stripped
+
+    @field_validator("base_url")
+    @classmethod
+    def validate_image_base_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("value must not be empty")
+        parsed = urlparse(stripped)
+        if parsed.scheme not in {"http", "https"}:
+            raise ValueError("base_url must start with http:// or https://")
+        if not parsed.hostname:
+            raise ValueError("base_url must include a host")
+        return stripped
+
+
+class ImageTestRequest(BaseModel):
+    prompt: str = Field(default="一只可爱的猫，头像风格", min_length=1, max_length=500)
 
 
 class EmbeddingSettingsOut(BaseModel):

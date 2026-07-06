@@ -247,6 +247,107 @@ async def build_memory_candidate(
     )[:2000]
 
 
+async def build_memory_candidate_from_messages(
+    repo: Repository,
+    llm: LLMService | None,
+    group_id: str,
+    messages: list,
+    *,
+    source_hint: str,
+) -> str:
+    sample_lines = []
+    for message in messages:
+        content = message.content.strip().replace("\n", " ")
+        if not content:
+            continue
+        if len(content) > 180:
+            content = content[:180].rstrip() + "..."
+        sample_lines.append(f"{message.user_id}: {content}")
+    if not sample_lines:
+        return ""
+
+    config = await repo.get_llm_config()
+    if llm is not None and config.api_key:
+        prompt = "\n".join(
+            [
+                "请把下面 QQ 群聊天整理成待审核的长期记忆候选。",
+                "只总结稳定偏好、群内规则、长期项目事实或反复出现的重要信息。",
+                "不要记录临时闲聊、一次性情绪、隐私密钥、密码、联系方式或不确定事实。",
+                "输出 1 到 5 条短句，用分号分隔，不要解释。",
+                "",
+                f"范围：{source_hint}",
+                "群聊片段：",
+                *sample_lines,
+            ]
+        )
+        result = await llm.chat(
+            repo,
+            prompt,
+            group_id=group_id,
+            user_id="",
+            skill_name="memory_summary",
+        )
+        text = result.text.strip()
+        if text:
+            return text[:2000]
+
+    return "\n".join(
+        [
+            f"群 {group_id} {source_hint}聊天摘要候选：",
+            *sample_lines[-10:],
+        ]
+    )[:2000]
+
+
+async def maybe_create_memory_summary_by_count(
+    repo: Repository,
+    llm: LLMService | None,
+    group_id: str,
+    threshold: int,
+) -> int | None:
+    threshold = max(10, min(threshold, 5000))
+    last_message_id = await repo.memory_summary_last_message_id(group_id)
+    count = await repo.count_group_messages_after_id(group_id, last_message_id)
+    if count < threshold:
+        return None
+
+    messages = await repo.group_messages_after_id(group_id, last_message_id, limit=threshold)
+    if len(messages) < threshold:
+        return None
+    content = await build_memory_candidate_from_messages(
+        repo,
+        llm,
+        group_id,
+        messages,
+        source_hint=f"累计 {len(messages)} 条",
+    )
+    await repo.set_memory_summary_last_message_id(group_id, messages[-1].id)
+    if not content:
+        return None
+    memory = await repo.create_memory(
+        group_id=group_id,
+        user_id="",
+        content=content[:2000],
+        source="auto_chat_count_summary",
+        confidence=0.6,
+        status="pending",
+        created_by="message_count",
+    )
+    await repo.audit(
+        action="memory_summary_create_pending",
+        group_id=group_id,
+        target_type="memory",
+        target_id=str(memory.id),
+        detail={
+            "source": "message_count",
+            "threshold": threshold,
+            "message_count": len(messages),
+            "last_message_id": messages[-1].id,
+        },
+    )
+    return memory.id
+
+
 def mark_task_success(task: ScheduledTask) -> None:
     task.last_run_at = now_utc()
     advance_next_run(task)

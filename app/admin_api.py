@@ -24,6 +24,9 @@ from app.schemas import (
     GroupUpdate,
     GroupDetailOut,
     GroupModerationConfigOut,
+    ImageSettingsOut,
+    ImageSettingsUpdate,
+    ImageTestRequest,
     KeywordRuleCreate,
     KeywordRuleOut,
     KeywordRuleUpdate,
@@ -1335,6 +1338,55 @@ async def test_llm_settings(
     result = await request.app.state.llm.chat(repo, payload.prompt, skill_name="admin_test")
     await session.commit()
     return {"status": result.status, "model": result.model, "text": result.text}
+
+
+@router.get(
+    "/settings/image",
+    response_model=ImageSettingsOut,
+    dependencies=[Depends(require_admin)],
+)
+async def get_image_settings(request: Request, session: AsyncSession = Depends(get_session)):
+    repo = repo_from(request, session)
+    config = await repo.get_image_config()
+    return ImageSettingsOut(
+        provider=config.provider,
+        base_url=config.base_url,
+        model=config.model,
+        size=config.size,
+        timeout_seconds=config.timeout_seconds,
+        api_key_configured=bool(config.api_key),
+    )
+
+
+@router.patch("/settings/image", dependencies=[Depends(require_admin)])
+async def update_image_settings(
+    payload: ImageSettingsUpdate,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    repo = repo_from(request, session)
+    await repo.update_image_config(payload.model_dump(exclude_unset=True))
+    await repo.audit(action="image_settings_update", target_type="settings", target_id="image")
+    await session.commit()
+    return await get_image_settings(request, session)
+
+
+@router.post("/settings/image/test", dependencies=[Depends(require_admin)])
+async def test_image_settings(
+    payload: ImageTestRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    repo = repo_from(request, session)
+    config = await repo.get_image_config()
+    result = await request.app.state.image.generate(config, payload.prompt)
+    await session.commit()
+    return {
+        "status": result.status,
+        "model": result.model,
+        "message": result.message,
+        "url": result.url,
+    }
 
 
 @router.get(

@@ -50,9 +50,9 @@ def test_parse_xlsx_import_splits_large_sheets():
     imported = parse_imported_knowledge("inventory.xlsx", large_workbook_bytes())
 
     assert imported.report.imported_row_count == 205
-    assert imported.report.document_count == 3
-    assert len(imported.documents) == 3
-    assert imported.documents[0].title.endswith("rows 2-101")
+    assert imported.report.document_count == 5
+    assert len(imported.documents) == 5
+    assert imported.documents[0].title.endswith("rows 2-51")
     assert imported.documents[-1].title.endswith("rows 202-206")
     assert "SKU-205" in imported.documents[-1].content
 

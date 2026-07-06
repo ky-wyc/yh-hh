@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, parse_csv
 from app.embedding import EmbeddingConfig, EmbeddingService
+from app.image_generation import ImageConfig
 from app.knowledge import cosine_similarity, chunk_text, knowledge_score, vector_literal
 from app.models import (
     AuditLog,
@@ -44,6 +45,12 @@ class LLMConfig:
 
 
 @dataclass(slots=True)
+class MemorySummaryConfig:
+    by_count_enabled: bool
+    message_threshold: int
+
+
+@dataclass(slots=True)
 class BotConfig:
     default_group_enabled: bool
     default_reply_mode: str
@@ -56,6 +63,8 @@ class BotConfig:
     private_chat_whitelist: str
     rate_limit_per_user_per_minute: int
     rate_limit_per_group_per_minute: int
+    memory_summary_by_count_enabled: bool
+    memory_summary_message_threshold: int
 
     @property
     def bot_nickname_list(self) -> list[str]:
@@ -363,6 +372,35 @@ class Repository:
             if value is not None and field in key_map:
                 await self.set_setting(key_map[field], str(value))
 
+    async def get_image_config(self) -> ImageConfig:
+        async def val(key: str, default: str) -> str:
+            stored = await self.get_setting(key)
+            return default if stored is None else stored
+
+        return ImageConfig(
+            provider=await val("image_provider", self.settings.image_provider),
+            base_url=await val("image_base_url", self.settings.image_base_url),
+            api_key=await val("image_api_key", self.settings.image_api_key),
+            model=await val("image_model", self.settings.image_model),
+            size=await val("image_size", self.settings.image_size),
+            timeout_seconds=float(
+                await val("image_timeout_seconds", str(self.settings.image_timeout_seconds))
+            ),
+        )
+
+    async def update_image_config(self, changes: dict[str, Any]) -> None:
+        key_map = {
+            "provider": "image_provider",
+            "base_url": "image_base_url",
+            "api_key": "image_api_key",
+            "model": "image_model",
+            "size": "image_size",
+            "timeout_seconds": "image_timeout_seconds",
+        }
+        for field, value in changes.items():
+            if value is not None and field in key_map:
+                await self.set_setting(key_map[field], str(value))
+
     async def get_bot_settings(self) -> BotConfig:
         async def val(key: str, default: str) -> str:
             stored = await self.get_setting(key)
@@ -370,6 +408,10 @@ class Repository:
 
         default_group_enabled = await val("default_group_enabled", str(self.settings.default_group_enabled))
         private_chat_enabled = await val("private_chat_enabled", str(self.settings.private_chat_enabled))
+        memory_summary_enabled = await val(
+            "memory_summary_by_count_enabled",
+            str(self.settings.memory_summary_by_count_enabled),
+        )
         return BotConfig(
             default_group_enabled=(
                 default_group_enabled.lower() == "true"
@@ -388,6 +430,13 @@ class Repository:
             rate_limit_per_group_per_minute=int(
                 await val("rate_limit_per_group_per_minute", str(self.settings.rate_limit_per_group_per_minute))
             ),
+            memory_summary_by_count_enabled=memory_summary_enabled.lower() == "true",
+            memory_summary_message_threshold=int(
+                await val(
+                    "memory_summary_message_threshold",
+                    str(self.settings.memory_summary_message_threshold),
+                )
+            ),
         )
 
     async def update_bot_settings(self, changes: dict[str, Any]) -> None:
@@ -403,6 +452,8 @@ class Repository:
             "private_chat_whitelist": "private_chat_whitelist",
             "rate_limit_per_user_per_minute": "rate_limit_per_user_per_minute",
             "rate_limit_per_group_per_minute": "rate_limit_per_group_per_minute",
+            "memory_summary_by_count_enabled": "memory_summary_by_count_enabled",
+            "memory_summary_message_threshold": "memory_summary_message_threshold",
         }
         for field, value in changes.items():
             if value is not None and field in key_map:
@@ -1168,6 +1219,43 @@ class Repository:
             .limit(limit)
         )
         return list(reversed(result.scalars().all()))
+
+    async def group_messages_after_id(
+        self,
+        group_id: str,
+        last_message_log_id: int,
+        limit: int,
+    ) -> list[MessageLog]:
+        result = await self.session.execute(
+            select(MessageLog)
+            .where(
+                MessageLog.group_id == group_id,
+                MessageLog.id > last_message_log_id,
+                MessageLog.message_type == "group",
+                MessageLog.status.in_(["received", "handled", "observed"]),
+            )
+            .order_by(MessageLog.id)
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
+    async def count_group_messages_after_id(self, group_id: str, last_message_log_id: int) -> int:
+        count = await self.session.scalar(
+            select(func.count(MessageLog.id)).where(
+                MessageLog.group_id == group_id,
+                MessageLog.id > last_message_log_id,
+                MessageLog.message_type == "group",
+                MessageLog.status.in_(["received", "handled", "observed"]),
+            )
+        )
+        return count or 0
+
+    async def memory_summary_last_message_id(self, group_id: str) -> int:
+        value = await self.get_setting(f"memory_summary_last_message_id:{group_id}")
+        return int(value) if value and value.isdigit() else 0
+
+    async def set_memory_summary_last_message_id(self, group_id: str, message_log_id: int) -> None:
+        await self.set_setting(f"memory_summary_last_message_id:{group_id}", str(message_log_id))
 
     async def recent_user_message_count(
         self,
