@@ -809,11 +809,11 @@ def test_knowledge_docs_can_be_imported_from_xlsx_for_multiple_groups(tmp_path):
         assert payload["report"]["imported_row_count"] == 1
         assert {item["group_id"] for item in payload["documents"]} == {"10001", "10002"}
         assert all(
-            item["title"] == "导入 FAQ / Sheet FAQ / rows 2-2"
+            item["title"] == "导入 FAQ / original workbook"
             for item in payload["documents"]
         )
         assert all(item["source_file_name"] == "faq.xlsx" for item in payload["documents"])
-        assert all(item["source_locator"] == "Sheet FAQ rows 2-2" for item in payload["documents"])
+        assert all(item["source_locator"] == "original workbook file" for item in payload["documents"])
         assert all((tmp_path / "knowledge_files").joinpath(Path(item["source_file_path"]).name).exists() for item in payload["documents"])
         assert "Question: Deploy" in payload["documents"][0]["content"]
         assert "Answer: Use Docker Compose" in payload["documents"][0]["content"]
@@ -823,7 +823,7 @@ def test_knowledge_docs_can_be_imported_from_xlsx_for_multiple_groups(tmp_path):
 
         group_one_docs = client.get("/api/knowledge-docs?group_id=10001", headers=headers)
         assert group_one_docs.status_code == 200
-        assert group_one_docs.json()[0]["title"] == "导入 FAQ / Sheet FAQ / rows 2-2"
+        assert group_one_docs.json()[0]["title"] == "导入 FAQ / original workbook"
         audit = client.get("/api/audit-logs", headers=headers)
         assert audit.json()[0]["action"] == "knowledge_docs_import"
 
@@ -876,7 +876,7 @@ def test_knowledge_import_falls_back_when_ai_map_raises(tmp_path):
         assert payload["documents"][0]["ai_summary"]
 
 
-def test_knowledge_import_splits_large_xlsx_into_multiple_documents(tmp_path):
+def test_knowledge_import_keeps_large_xlsx_as_single_original_file_preview(tmp_path):
     settings = Settings(
         DATABASE_URL=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",
         KNOWLEDGE_FILE_DIR=str(tmp_path / "knowledge_files"),
@@ -912,14 +912,15 @@ def test_knowledge_import_splits_large_xlsx_into_multiple_documents(tmp_path):
 
         assert imported.status_code == 200
         payload = imported.json()
-        assert payload["source_document_count"] == 5
-        assert payload["total"] == 5
+        assert payload["source_document_count"] == 1
+        assert payload["total"] == 1
         assert payload["report"]["imported_row_count"] == 205
-        assert payload["report"]["document_count"] == 5
+        assert payload["report"]["document_count"] == 1
         titles = [item["title"] for item in payload["documents"]]
-        assert titles[0].endswith("rows 2-51")
-        assert titles[-1].endswith("rows 202-206")
-        assert "SKU-205" in payload["documents"][-1]["content"]
+        assert titles == ["Inventory Import / original workbook"]
+        assert payload["report"]["truncated"] is True
+        assert "SKU-001" in payload["documents"][0]["content"]
+        assert "SKU-205" not in payload["documents"][0]["content"]
 
 
 def test_imported_knowledge_stays_keyword_searchable_when_embedding_fails(tmp_path):
@@ -971,7 +972,7 @@ def test_imported_knowledge_stays_keyword_searchable_when_embedding_fails(tmp_pa
         )
         assert searched.status_code == 200
         results = searched.json()["results"]
-        assert results[0]["title"] == "Deploy FAQ / Sheet FAQ / rows 2-2"
+        assert results[0]["title"] == "Deploy FAQ / original workbook"
         assert "Use Docker Compose" in results[0]["content"]
 
 

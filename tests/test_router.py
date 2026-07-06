@@ -123,6 +123,70 @@ async def test_image_command_uses_image_generation_service(settings, repo, messa
     ]
 
 
+async def test_mention_image_request_auto_uses_image_skill(settings, repo, message_router, sender):
+    class FakeImageService:
+        def __init__(self):
+            self.prompts: list[str] = []
+
+        async def generate(self, config, prompt: str):
+            self.prompts.append(prompt)
+            return ImageResult(
+                message="image generated",
+                model=config.model,
+                url="https://img.example/cat.png",
+            )
+
+    fake = FakeImageService()
+    message_router.image = fake
+    message_router.skills.image = fake
+    event = normalize_group_message(
+        group_segment_event(
+            [
+                {"type": "at", "data": {"qq": "123456"}},
+                {"type": "text", "data": {"text": " 帮我画一只戴帽子的猫"}},
+            ],
+            message_id=54,
+        ),
+        settings,
+    )
+
+    outcome = await message_router.handle(event, repo, sender)
+
+    assert outcome.replied is True
+    assert outcome.skill_name == "image"
+    assert outcome.reason == "auto_image_mention"
+    assert fake.prompts == ["一只戴帽子的猫"]
+    assert sender.group_messages == [("10001", "image generated")]
+
+
+async def test_active_image_request_auto_uses_image_skill(settings, repo, message_router, sender):
+    class FakeImageService:
+        def __init__(self):
+            self.prompts: list[str] = []
+
+        async def generate(self, config, prompt: str):
+            self.prompts.append(prompt)
+            return ImageResult(
+                message="active image generated",
+                model=config.model,
+                url="https://img.example/dog.png",
+            )
+
+    fake = FakeImageService()
+    message_router.image = fake
+    message_router.skills.image = fake
+    await repo.update_group("10001", reply_mode="active")
+    event = normalize_group_message(group_event("生成图片 一只赛博小狗", message_id=55), settings)
+
+    outcome = await message_router.handle(event, repo, sender)
+
+    assert outcome.replied is True
+    assert outcome.skill_name == "image"
+    assert outcome.reason == "auto_image_active"
+    assert fake.prompts == ["一只赛博小狗"]
+    assert sender.group_messages == [("10001", "active image generated")]
+
+
 async def test_message_count_memory_summary_creates_pending_memory(settings, repo, message_router, sender):
     await repo.update_bot_settings(
         {

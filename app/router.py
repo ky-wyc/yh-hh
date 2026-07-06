@@ -7,7 +7,11 @@ from typing import Any
 from app.cache import RateLimitExceeded
 from app.config import Settings
 from app.events import BotEvent, GroupNoticeEvent
-from app.image_generation import ImageGenerationService
+from app.image_generation import (
+    ImageGenerationService,
+    extract_image_prompt,
+    should_auto_image_generation,
+)
 from app.llm import LLMService
 from app.models import now_utc
 from app.repository import Repository
@@ -215,6 +219,44 @@ class MessageRouter:
             or self._has_runtime_at(event.text, bot_qq)
             or any(name and name in event.text for name in bot_settings.bot_nickname_list)
         )
+        enabled_skills_for_auto = await repo.enabled_skill_names(event.group_id, self.skills.skill_names)
+        mention_image_prompt = extract_image_prompt(
+            event.text,
+            bot_qq,
+            bot_settings.bot_nickname_list,
+        )
+        if (
+            at_bot
+            and group.reply_mode in {"mention_only", "active"}
+            and "image" in enabled_skills_for_auto
+            and should_auto_image_generation(event.text)
+        ):
+            return await self._run_image_skill_reply(
+                event,
+                message_log,
+                repo,
+                sender,
+                prompt=mention_image_prompt,
+                command_prefix=bot_settings.command_prefix,
+                enabled_skills=enabled_skills_for_auto,
+                trigger_type="auto_image_mention",
+            )
+        if (
+            group.reply_mode == "active"
+            and "image" in enabled_skills_for_auto
+            and should_auto_image_generation(event.text)
+        ):
+            return await self._run_image_skill_reply(
+                event,
+                message_log,
+                repo,
+                sender,
+                prompt=extract_image_prompt(event.text),
+                command_prefix=bot_settings.command_prefix,
+                enabled_skills=enabled_skills_for_auto,
+                trigger_type="auto_image_active",
+            )
+
         ai_enabled = await repo.effective_skill_enabled(skill_name="ai", group_id=event.group_id)
         if at_bot and group.reply_mode in {"mention_only", "active"} and ai_enabled:
             prompt = self._remove_bot_mentions(event.text, bot_qq, bot_settings.bot_nickname_list) or event.text
@@ -418,6 +460,19 @@ class MessageRouter:
                 skill_name=result.skill_name,
             )
 
+        if "image" in enabled_skills and should_auto_image_generation(event.text):
+            return await self._run_image_skill_reply(
+                event,
+                message_log,
+                repo,
+                sender,
+                prompt=extract_image_prompt(event.text),
+                command_prefix=bot_settings.command_prefix,
+                enabled_skills=enabled_skills,
+                trigger_type="private_auto_image",
+                private=True,
+            )
+
         if "ai" not in enabled_skills:
             await repo.mark_message(message_log, "observed", "private_ai_disabled")
             return RouteOutcome(status="observed", reason="private_ai_disabled")
@@ -588,6 +643,60 @@ class MessageRouter:
             replied=True,
             reply_text=text,
             skill_name="admin-lite",
+        )
+
+    async def _run_image_skill_reply(
+        self,
+        event: BotEvent,
+        message_log: Any,
+        repo: Repository,
+        sender: Any,
+        *,
+        prompt: str,
+        command_prefix: str,
+        enabled_skills: set[str],
+        trigger_type: str,
+        private: bool = False,
+    ) -> RouteOutcome:
+        result = await self.skills.dispatch(
+            "image",
+            prompt,
+            SkillContext(
+                repo=repo,
+                llm=self.llm,
+                image=self.image,
+                group_id="" if private else event.group_id,
+                user_id=event.user_id,
+                message_id=event.message_id,
+                command_prefix=command_prefix,
+                enabled_skills=enabled_skills,
+                sender=sender,
+                web_search=self.web_search,
+            ),
+        )
+        sent = (
+            await self._send_private_reply(event, message_log, repo, sender, result.text)
+            if private
+            else await self._send_group_reply(event, message_log, repo, sender, result.text)
+        )
+        if not sent:
+            return RouteOutcome(status="error", reason="send_failed")
+        await repo.save_reply(
+            group_id="" if private else event.group_id,
+            user_id=event.user_id,
+            trigger_type=trigger_type,
+            input_message_id=event.message_id,
+            content=result.text,
+            skill_name="image",
+            llm_model=result.llm_model,
+        )
+        await repo.mark_message(message_log, "handled", trigger_type)
+        return RouteOutcome(
+            status="handled",
+            reason=trigger_type,
+            replied=True,
+            reply_text=result.text,
+            skill_name="image",
         )
 
     async def _maybe_with_web_search(

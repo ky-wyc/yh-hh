@@ -36,33 +36,39 @@ def large_workbook_bytes(row_count: int = 205) -> bytes:
 def test_parse_xlsx_import_extracts_sheet_rows():
     imported = parse_imported_knowledge("faq.xlsx", workbook_bytes())
 
-    assert imported.title == "faq / Sheet FAQ / rows 2-2"
+    assert imported.title == "faq / original workbook"
     assert imported.file_type == "xlsx"
     assert imported.report.source_count == 1
     assert imported.report.imported_row_count == 1
     assert imported.report.document_count == 1
+    assert len(imported.documents) == 1
+    assert "Import mode: original file retained" in imported.content
     assert "Source: Sheet FAQ" in imported.content
     assert "Question: Deploy" in imported.content
     assert "Answer: Use Docker Compose" in imported.content
 
 
-def test_parse_xlsx_import_splits_large_sheets():
+def test_parse_xlsx_import_keeps_single_original_file_preview():
     imported = parse_imported_knowledge("inventory.xlsx", large_workbook_bytes())
 
     assert imported.report.imported_row_count == 205
-    assert imported.report.document_count == 5
-    assert len(imported.documents) == 5
-    assert imported.documents[0].title.endswith("rows 2-51")
-    assert imported.documents[-1].title.endswith("rows 202-206")
-    assert "SKU-205" in imported.documents[-1].content
+    assert imported.report.document_count == 1
+    assert len(imported.documents) == 1
+    assert imported.report.truncated is True
+    assert imported.documents[0].title == "inventory / original workbook"
+    assert "SKU-001" in imported.documents[0].content
+    assert "SKU-205" not in imported.documents[0].content
+    assert "original file is retained" in " ".join(imported.report.warnings)
 
 
 def test_parse_csv_import_extracts_rows():
     imported = parse_imported_knowledge("rules.csv", b"Keyword,Action\nAds,Block\n")
 
-    assert imported.title == "rules / CSV / rows 2-2"
+    assert imported.title == "rules / original CSV"
     assert imported.file_type == "csv"
     assert imported.report.imported_row_count == 1
+    assert imported.report.document_count == 1
+    assert "Import mode: original file retained" in imported.content
     assert "Keyword: Ads" in imported.content
     assert "Action: Block" in imported.content
 

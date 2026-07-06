@@ -29,6 +29,53 @@ class ImageGenerationError(RuntimeError):
     pass
 
 
+IMAGE_INTENT_MARKERS = (
+    "\u753b",
+    "\u753b\u4e00\u5f20",
+    "\u753b\u4e2a",
+    "\u751f\u6210\u56fe",
+    "\u751f\u6210\u56fe\u7247",
+    "\u751f\u56fe",
+    "\u505a\u5f20\u56fe",
+    "\u505a\u4e00\u5f20\u56fe",
+    "\u6765\u5f20\u56fe",
+    "\u56fe\u7247",
+    "draw",
+    "image",
+    "generate image",
+)
+
+
+def should_auto_image_generation(text: str) -> bool:
+    normalized = text.strip().lower()
+    if not normalized:
+        return False
+    if normalized.startswith(("/image", "/draw", "/\u751f\u56fe")):
+        return True
+    return any(marker in normalized for marker in IMAGE_INTENT_MARKERS)
+
+
+def extract_image_prompt(text: str, bot_qq: str = "", bot_nicknames: list[str] | None = None) -> str:
+    prompt = text.strip()
+    if bot_qq:
+        prompt = prompt.replace(f"[CQ:at,qq={bot_qq}]", "")
+    for name in bot_nicknames or []:
+        if name:
+            prompt = prompt.replace(name, "")
+    prompt = re.sub(r"^/(image|draw|\u751f\u56fe)\s*", "", prompt, flags=re.IGNORECASE)
+    for pattern in (
+        r"^\s*\u8bf7?\s*\u5e2e\u6211\s*",
+        r"^\s*\u5e2e\u6211\s*",
+        r"^\s*\u7ed9\u6211\s*",
+        r"^\s*\u8bf7\s*",
+    ):
+        prompt = re.sub(pattern, "", prompt)
+    for marker in sorted(IMAGE_INTENT_MARKERS, key=len, reverse=True):
+        prompt = re.sub(rf"^\s*{re.escape(marker)}\s*", "", prompt, flags=re.IGNORECASE)
+    prompt = prompt.strip(" \t\r\n:：，,。.")
+    return prompt or text.strip()
+
+
 class ImageGenerationService:
     def __init__(self, client: httpx.AsyncClient | None = None):
         self.client = client

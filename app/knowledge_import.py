@@ -13,6 +13,8 @@ SUPPORTED_EXTENSIONS = {".txt", ".md", ".csv", ".xls", ".xlsx", ".xlsm"}
 MAX_IMPORT_BYTES = 25 * 1024 * 1024
 MAX_DOCUMENT_CHARS = 20_000
 ROWS_PER_DOCUMENT = 50
+MAX_PREVIEW_ROWS_PER_SHEET = 30
+MAX_PREVIEW_TEXT_CHARS = 18_000
 
 
 @dataclass(slots=True)
@@ -89,14 +91,21 @@ def parse_text_documents(
     if not content:
         return []
     report.source_count = 1
-    sections = split_text(content, MAX_DOCUMENT_CHARS)
+    if len(content) > MAX_PREVIEW_TEXT_CHARS:
+        content = content[:MAX_PREVIEW_TEXT_CHARS].rstrip()
+        report.truncated = True
+        report.warnings.append("text file preview was truncated")
     return [
         ImportedKnowledgeDocument(
-            title=part_title(base_title, index, len(sections)),
-            content=section,
-            locator=f"part {index}" if len(sections) > 1 else "",
+            title=base_title[:255],
+            content=file_overview_content(
+                file_title=base_title,
+                file_type=report.file_type,
+                body=content,
+                locator="original text file preview",
+            ),
+            locator="original file",
         )
-        for index, section in enumerate(sections, start=1)
     ]
 
 
@@ -107,8 +116,14 @@ def parse_csv_documents(
 ) -> list[ImportedKnowledgeDocument]:
     reader = csv.reader(StringIO(decode_text(data)))
     header: list[str] = []
-    row_sections: list[tuple[int, str]] = []
+    row_sections: list[str] = []
     for row_number, row in enumerate(reader, start=1):
+        if row_number > MAX_PREVIEW_ROWS_PER_SHEET + 1:
+            report.truncated = True
+            report.warnings.append(
+                f"CSV preview stops after {MAX_PREVIEW_ROWS_PER_SHEET} data rows; original file is retained"
+            )
+            break
         values = [str(cell).strip() for cell in row]
         if not any(values):
             report.skipped_empty_rows += 1
@@ -117,17 +132,35 @@ def parse_csv_documents(
         if not header:
             header = values
             continue
-        row_sections.append((row_number, format_structured_row(row_number, values, header)))
+        if len(row_sections) < MAX_PREVIEW_ROWS_PER_SHEET:
+            row_sections.append(format_structured_row(row_number, values, header))
         report.imported_row_count += 1
-    if not row_sections and header:
-        row_sections.append((1, "Row 1\n" + "\n".join(value for value in header if value)))
-        report.imported_row_count = 1
+    if report.imported_row_count > len(row_sections):
+        report.truncated = True
+        report.warnings.append(
+            f"CSV preview keeps first {len(row_sections)} data rows; original file is retained"
+        )
     report.source_count = 1
-    return pack_row_sections(
-        base_title=base_title,
-        source_label="CSV",
-        row_sections=row_sections,
+    body = "\n\n".join(
+        [
+            "Source: CSV",
+            "Header: " + ", ".join(value for value in header if value),
+            "Preview rows:",
+            *row_sections,
+        ]
     )
+    return [
+        ImportedKnowledgeDocument(
+            title=f"{base_title} / original CSV"[:255],
+            content=file_overview_content(
+                file_title=base_title,
+                file_type="csv",
+                body=body,
+                locator="original CSV file preview",
+            ),
+            locator="original CSV file",
+        )
+    ]
 
 
 def parse_workbook_documents(
@@ -136,36 +169,61 @@ def parse_workbook_documents(
     report: KnowledgeImportReport,
 ) -> list[ImportedKnowledgeDocument]:
     workbook = load_workbook(BytesIO(data), read_only=True, data_only=True)
-    documents: list[ImportedKnowledgeDocument] = []
+    sections: list[str] = []
     try:
         report.source_count = len(workbook.worksheets)
         for sheet in workbook.worksheets:
             header: list[str] = []
-            row_sections: list[tuple[int, str]] = []
-            for row_number, row in enumerate(sheet.iter_rows(values_only=True), start=1):
+            row_sections: list[str] = []
+            approx_rows = sheet.max_row or 0
+            if approx_rows:
+                report.row_count += approx_rows
+                report.imported_row_count += max(0, approx_rows - 1)
+            preview_max_row = min(approx_rows or MAX_PREVIEW_ROWS_PER_SHEET + 1, MAX_PREVIEW_ROWS_PER_SHEET + 1)
+            for row_number, row in enumerate(
+                sheet.iter_rows(max_row=preview_max_row, values_only=True),
+                start=1,
+            ):
                 values = [format_cell(value) for value in row]
                 if not any(values):
                     report.skipped_empty_rows += 1
                     continue
-                report.row_count += 1
                 if not header:
                     header = values
                     continue
-                row_sections.append((row_number, format_structured_row(row_number, values, header)))
-                report.imported_row_count += 1
-            if not row_sections and header:
-                row_sections.append((1, "Row 1\n" + "\n".join(value for value in header if value)))
-                report.imported_row_count += 1
-            documents.extend(
-                pack_row_sections(
-                    base_title=base_title,
-                    source_label=f"Sheet {sheet.title}",
-                    row_sections=row_sections,
+                if len(row_sections) < MAX_PREVIEW_ROWS_PER_SHEET:
+                    row_sections.append(format_structured_row(row_number, values, header))
+            if approx_rows - 1 > len(row_sections):
+                report.truncated = True
+            sections.append(
+                "\n\n".join(
+                    [
+                        f"Source: Sheet {sheet.title}",
+                        f"Approx rows: {approx_rows}",
+                        "Header: " + ", ".join(value for value in header if value),
+                        "Preview rows:",
+                        *row_sections,
+                    ]
                 )
             )
     finally:
         workbook.close()
-    return documents
+    if report.truncated:
+        report.warnings.append(
+            f"Workbook preview keeps first {MAX_PREVIEW_ROWS_PER_SHEET} data rows per sheet; original file is retained"
+        )
+    return [
+        ImportedKnowledgeDocument(
+            title=f"{base_title} / original workbook"[:255],
+            content=file_overview_content(
+                file_title=base_title,
+                file_type=report.file_type,
+                body="\n\n---\n\n".join(sections),
+                locator="original workbook file preview",
+            ),
+            locator="original workbook file",
+        )
+    ]
 
 
 def parse_xls_documents(
@@ -176,34 +234,71 @@ def parse_xls_documents(
     import xlrd
 
     workbook = xlrd.open_workbook(file_contents=data)
-    documents: list[ImportedKnowledgeDocument] = []
+    sections: list[str] = []
     report.source_count = workbook.nsheets
     for sheet in workbook.sheets():
         header: list[str] = []
-        row_sections: list[tuple[int, str]] = []
-        for row_index in range(sheet.nrows):
+        row_sections: list[str] = []
+        report.row_count += sheet.nrows
+        report.imported_row_count += max(0, sheet.nrows - 1)
+        for row_index in range(min(sheet.nrows, MAX_PREVIEW_ROWS_PER_SHEET + 1)):
             row_number = row_index + 1
             values = [format_cell(sheet.cell_value(row_index, column_index)) for column_index in range(sheet.ncols)]
             if not any(values):
                 report.skipped_empty_rows += 1
                 continue
-            report.row_count += 1
             if not header:
                 header = values
                 continue
-            row_sections.append((row_number, format_structured_row(row_number, values, header)))
-            report.imported_row_count += 1
-        if not row_sections and header:
-            row_sections.append((1, "Row 1\n" + "\n".join(value for value in header if value)))
-            report.imported_row_count += 1
-        documents.extend(
-            pack_row_sections(
-                base_title=base_title,
-                source_label=f"Sheet {sheet.name}",
-                row_sections=row_sections,
+            if len(row_sections) < MAX_PREVIEW_ROWS_PER_SHEET:
+                row_sections.append(format_structured_row(row_number, values, header))
+        if sheet.nrows - 1 > len(row_sections):
+            report.truncated = True
+        sections.append(
+            "\n\n".join(
+                [
+                    f"Source: Sheet {sheet.name}",
+                    f"Approx rows: {sheet.nrows}",
+                    "Header: " + ", ".join(value for value in header if value),
+                    "Preview rows:",
+                    *row_sections,
+                ]
             )
         )
-    return documents
+    if report.truncated:
+        report.warnings.append(
+            f"Workbook preview keeps first {MAX_PREVIEW_ROWS_PER_SHEET} data rows per sheet; original file is retained"
+        )
+    return [
+        ImportedKnowledgeDocument(
+            title=f"{base_title} / original workbook"[:255],
+            content=file_overview_content(
+                file_title=base_title,
+                file_type=report.file_type,
+                body="\n\n---\n\n".join(sections),
+                locator="original workbook file preview",
+            ),
+            locator="original workbook file",
+        )
+    ]
+
+
+def file_overview_content(*, file_title: str, file_type: str, body: str, locator: str) -> str:
+    content = "\n\n".join(
+        [
+            f"Imported source file: {file_title}",
+            f"File type: {file_type}",
+            f"Locator: {locator}",
+            (
+                "Import mode: original file retained. This knowledge document stores a "
+                "lightweight preview and AI-readable directory, not a full row-by-row copy."
+            ),
+            body.strip(),
+        ]
+    )
+    if len(content) > MAX_DOCUMENT_CHARS:
+        return content[:MAX_DOCUMENT_CHARS].rstrip()
+    return content
 
 
 def pack_row_sections(
