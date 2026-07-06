@@ -757,11 +757,17 @@ class Repository:
         content: str,
         enabled: bool,
         created_by: str,
+        source_file_name: str = "",
+        source_file_path: str = "",
+        source_locator: str = "",
     ) -> KnowledgeDocument:
         document = KnowledgeDocument(
             group_id=group_id,
             title=title,
             content=content,
+            source_file_name=source_file_name,
+            source_file_path=source_file_path,
+            source_locator=source_locator,
             enabled=enabled,
             created_by=created_by,
         )
@@ -823,7 +829,15 @@ class Repository:
             return None
         content_changed = False
         scope_changed = False
-        for key in ("group_id", "title", "content", "enabled"):
+        for key in (
+            "group_id",
+            "title",
+            "content",
+            "source_file_name",
+            "source_file_path",
+            "source_locator",
+            "enabled",
+        ):
             if key in changes and changes[key] is not None:
                 if key == "content" and changes[key] != document.content:
                     content_changed = True
@@ -945,7 +959,12 @@ class Repository:
         ranked: list[KnowledgeSearchResult] = []
         for chunk, document in result.all():
             vector_score = cosine_similarity(query_embedding, self._chunk_embedding(chunk))
-            score = knowledge_score(query, chunk.content) + max(vector_score, 0.0) * 10.0
+            score = (
+                knowledge_score(query, chunk.content)
+                + knowledge_score(query, chunk.title) * 1.5
+                + knowledge_score(query, document.source_file_name) * 0.5
+                + max(vector_score, 0.0) * 10.0
+            )
             if score <= 0:
                 continue
             ranked.append(

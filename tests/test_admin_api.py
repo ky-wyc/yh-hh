@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from io import BytesIO
 import json
+from pathlib import Path
 import time
 
 import pytest
@@ -593,6 +594,7 @@ def test_knowledge_docs_can_be_created_chunked_and_searched_from_admin(tmp_path)
 def test_knowledge_docs_can_be_imported_from_xlsx_for_multiple_groups(tmp_path):
     settings = Settings(
         DATABASE_URL=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",
+        KNOWLEDGE_FILE_DIR=str(tmp_path / "knowledge_files"),
         REDIS_URL="",
         ADMIN_USERNAME="admin",
         ADMIN_PASSWORD="secret",
@@ -636,6 +638,9 @@ def test_knowledge_docs_can_be_imported_from_xlsx_for_multiple_groups(tmp_path):
             item["title"] == "导入 FAQ / Sheet FAQ / rows 2-2"
             for item in payload["documents"]
         )
+        assert all(item["source_file_name"] == "faq.xlsx" for item in payload["documents"])
+        assert all(item["source_locator"] == "Sheet FAQ rows 2-2" for item in payload["documents"])
+        assert all((tmp_path / "knowledge_files").joinpath(Path(item["source_file_path"]).name).exists() for item in payload["documents"])
         assert "Question: Deploy" in payload["documents"][0]["content"]
         assert "Answer: Use Docker Compose" in payload["documents"][0]["content"]
 
@@ -649,6 +654,7 @@ def test_knowledge_docs_can_be_imported_from_xlsx_for_multiple_groups(tmp_path):
 def test_knowledge_import_splits_large_xlsx_into_multiple_documents(tmp_path):
     settings = Settings(
         DATABASE_URL=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",
+        KNOWLEDGE_FILE_DIR=str(tmp_path / "knowledge_files"),
         REDIS_URL="",
         ADMIN_USERNAME="admin",
         ADMIN_PASSWORD="secret",
@@ -694,6 +700,7 @@ def test_knowledge_import_splits_large_xlsx_into_multiple_documents(tmp_path):
 def test_imported_knowledge_stays_keyword_searchable_when_embedding_fails(tmp_path):
     settings = Settings(
         DATABASE_URL=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",
+        KNOWLEDGE_FILE_DIR=str(tmp_path / "knowledge_files"),
         REDIS_URL="",
         ADMIN_USERNAME="admin",
         ADMIN_PASSWORD="secret",

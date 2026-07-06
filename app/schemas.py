@@ -306,6 +306,9 @@ class KnowledgeDocumentOut(BaseModel):
     group_id: str
     title: str
     content: str
+    source_file_name: str
+    source_file_path: str
+    source_locator: str
     enabled: bool
     index_status: str
     index_error: str

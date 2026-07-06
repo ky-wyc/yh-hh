@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime, timedelta
+from pathlib import Path as FilePath, PurePath
+import re
 from typing import Annotated
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Path, Query, Request, UploadFile
 from sqlalchemy import text
@@ -53,6 +56,21 @@ from app.skills import SKILL_CATALOG
 router = APIRouter(prefix="/api")
 
 
+def safe_file_name(filename: str) -> str:
+    name = PurePath(filename or "knowledge-file").name
+    name = re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("._")
+    return name[:180] or "knowledge-file"
+
+
+def save_knowledge_file(request: Request, filename: str, data: bytes) -> str:
+    storage_dir = FilePath(request.app.state.settings.knowledge_file_dir)
+    storage_dir.mkdir(parents=True, exist_ok=True)
+    stored_name = f"{uuid4().hex}_{safe_file_name(filename)}"
+    path = storage_dir / stored_name
+    path.write_bytes(data)
+    return str(path)
+
+
 async def get_session(request: Request) -> AsyncSession:
     session = request.app.state.session_factory()
     try:
@@ -101,6 +119,9 @@ def knowledge_document_out(document) -> KnowledgeDocumentOut:
         group_id=document.group_id,
         title=document.title,
         content=document.content,
+        source_file_name=document.source_file_name,
+        source_file_path=document.source_file_path,
+        source_locator=document.source_locator,
         enabled=document.enabled,
         index_status=document.index_status,
         index_error=document.index_error,
@@ -737,6 +758,8 @@ async def import_knowledge_doc(
         imported = parse_imported_knowledge(file.filename or "", data, title)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    source_file_name = file.filename or imported.report.file_name
+    source_file_path = save_knowledge_file(request, source_file_name, data)
 
     documents = []
     for group_id in target_group_ids:
@@ -747,6 +770,9 @@ async def import_knowledge_doc(
                 content=imported_document.content,
                 enabled=enabled,
                 created_by="admin",
+                source_file_name=source_file_name,
+                source_file_path=source_file_path,
+                source_locator=imported_document.locator,
             )
             documents.append(document)
 
@@ -756,6 +782,7 @@ async def import_knowledge_doc(
         target_id="bulk",
         detail={
             "file_name": file.filename or "",
+            "source_file_path": source_file_path,
             "file_type": imported.file_type,
             "group_ids": target_group_ids,
             "document_count": len(documents),

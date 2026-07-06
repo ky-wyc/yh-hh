@@ -25,10 +25,29 @@ def chunk_text(text: str, *, chunk_size: int = 800, overlap: int = 120) -> list[
 
 def text_terms(text: str) -> list[str]:
     normalized = text.strip().lower()
-    terms = [term for term in re.split(r"\s+", normalized) if term]
-    if len(terms) <= 1 and len(normalized) > 1:
-        terms.extend(char for char in normalized if not char.isspace())
+    return [term for term in re.split(r"\s+", normalized) if term]
+
+
+def keyword_terms(text: str) -> list[str]:
+    normalized = text.strip().lower()
+    base_terms = [term for term in re.split(r"[\s,，。；;:：/\\|()（）\[\]{}<>《》\"'`]+", normalized) if term]
+    terms: list[str] = []
+    for term in base_terms:
+        if term not in terms:
+            terms.append(term)
+        if re.search(r"[\u4e00-\u9fff]", term):
+            for size in (3, 2):
+                for index in range(0, max(0, len(term) - size + 1)):
+                    ngram = term[index : index + size]
+                    if ngram not in terms:
+                        terms.append(ngram)
+    if not terms and len(normalized) > 1:
+        terms.append(normalized)
     return terms
+
+
+def strong_identifier_terms(text: str) -> list[str]:
+    return re.findall(r"[a-zA-Z0-9][a-zA-Z0-9._:-]{1,}", text.lower())
 
 
 def embed_text(text: str, *, dimensions: int = EMBEDDING_DIMENSION) -> list[float]:
@@ -67,13 +86,19 @@ def knowledge_score(query: str, content: str) -> float:
 
     score = 0.0
     if normalized_query in normalized_content:
-        score += 100.0
+        score += 300.0
 
     seen_terms = set()
-    for term in text_terms(normalized_query):
+    for term in keyword_terms(normalized_query):
         if term in seen_terms:
             continue
         seen_terms.add(term)
         if term and term in normalized_content:
-            score += 1.0 + min(normalized_content.count(term), 10) * 0.2
+            weight = 4.0 if len(term) >= 3 else 1.0
+            score += weight + min(normalized_content.count(term), 10) * 0.5
+    for term in strong_identifier_terms(normalized_query):
+        if term and term in normalized_content:
+            score += 80.0 + min(normalized_content.count(term), 10) * 2.0
+            if re.search(rf"(^|[^a-zA-Z0-9._:-]){re.escape(term)}([^a-zA-Z0-9._:-]|$)", normalized_content):
+                score += 120.0
     return score

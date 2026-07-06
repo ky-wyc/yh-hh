@@ -22,6 +22,7 @@ class Settings(BaseSettings):
 
     database_url: str = Field(default="sqlite+aiosqlite:///./data/qqbot.db", alias="DATABASE_URL")
     redis_url: str = Field(default="", alias="REDIS_URL")
+    knowledge_file_dir: str = Field(default="./data/knowledge_files", alias="KNOWLEDGE_FILE_DIR")
 
     onebot_connection_mode: str = Field(default="reverse_ws", alias="ONEBOT_CONNECTION_MODE")
     onebot_reverse_ws_path: str = Field(default="/onebot/ws", alias="ONEBOT_REVERSE_WS_PATH")

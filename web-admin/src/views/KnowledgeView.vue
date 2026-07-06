@@ -184,6 +184,8 @@
       </template>
     </el-table-column>
     <el-table-column prop="title" label="标题" min-width="180" />
+    <el-table-column prop="source_file_name" label="来源文件" min-width="180" show-overflow-tooltip />
+    <el-table-column prop="source_locator" label="来源位置" min-width="160" show-overflow-tooltip />
     <el-table-column label="启用" width="100">
       <template #default="{ row }">
         <el-switch v-model="row.enabled" @change="toggleDocument(row)" />
@@ -221,6 +223,9 @@ type KnowledgeDocument = {
   group_id: string
   title: string
   content: string
+  source_file_name: string
+  source_file_path: string
+  source_locator: string
   enabled: boolean
   index_status: string
   index_error: string

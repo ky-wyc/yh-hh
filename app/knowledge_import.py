@@ -19,6 +19,7 @@ ROWS_PER_DOCUMENT = 100
 class ImportedKnowledgeDocument:
     title: str
     content: str
+    locator: str = ""
 
 
 @dataclass(slots=True)
@@ -91,6 +92,7 @@ def parse_text_documents(
         ImportedKnowledgeDocument(
             title=part_title(base_title, index, len(sections)),
             content=section,
+            locator=f"part {index}" if len(sections) > 1 else "",
         )
         for index, section in enumerate(sections, start=1)
     ]
@@ -205,7 +207,11 @@ def make_row_document(
     end_row = parse_section_row_number(last_section) or start_row
     title = f"{base_title} / {source_label} / rows {start_row}-{end_row}"[:255]
     content = "\n\n".join([f"Source: {source_label}", f"Rows: {start_row}-{end_row}", *sections])
-    return ImportedKnowledgeDocument(title=title, content=content)
+    return ImportedKnowledgeDocument(
+        title=title,
+        content=content,
+        locator=f"{source_label} rows {start_row}-{end_row}",
+    )
 
 
 def parse_section_row_number(section: str) -> int | None:

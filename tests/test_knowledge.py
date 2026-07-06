@@ -5,7 +5,7 @@ import json
 from sqlalchemy import select
 
 from app.embedding import EmbeddingConfig
-from app.knowledge import EMBEDDING_DIMENSION, cosine_similarity, embed_text
+from app.knowledge import EMBEDDING_DIMENSION, cosine_similarity, embed_text, knowledge_score
 from app.models import KnowledgeChunk
 from app.repository import Repository
 
@@ -65,6 +65,13 @@ async def test_knowledge_search_uses_vectorized_chunks(repo):
     assert results
     assert results[0].title == "部署手册"
     assert results[0].score > 0
+
+
+def test_keyword_score_prioritizes_exact_identifiers():
+    exact = knowledge_score("SKU-205", "Row 206\nSku: SKU-205\nName: Item 205")
+    loose = knowledge_score("SKU-205", "Row 6\nSku: SKU-005\nName: Item 5")
+
+    assert exact > loose + 100
 
 
 async def test_knowledge_index_uses_configured_embedding_service(repo):

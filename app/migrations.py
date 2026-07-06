@@ -120,6 +120,24 @@ async def knowledge_pgvector_support(conn: AsyncConnection) -> None:
         return
 
 
+async def knowledge_file_metadata(conn: AsyncConnection) -> None:
+    await add_column_if_missing(
+        conn,
+        "knowledge_documents",
+        "source_file_name VARCHAR(255) DEFAULT ''",
+    )
+    await add_column_if_missing(
+        conn,
+        "knowledge_documents",
+        "source_file_path VARCHAR(500) DEFAULT ''",
+    )
+    await add_column_if_missing(
+        conn,
+        "knowledge_documents",
+        "source_locator VARCHAR(255) DEFAULT ''",
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration("20260706_001_baseline_schema", "Record baseline schema after MVP create_all", baseline_schema),
     Migration(
@@ -146,5 +164,10 @@ MIGRATIONS: tuple[Migration, ...] = (
         "20260706_006_knowledge_pgvector_support",
         "Enable pgvector column for knowledge chunks when available",
         knowledge_pgvector_support,
+    ),
+    Migration(
+        "20260706_007_knowledge_file_metadata",
+        "Store source file metadata for imported knowledge documents",
+        knowledge_file_metadata,
     ),
 )
