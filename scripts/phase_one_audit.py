@@ -220,7 +220,7 @@ def build_report(project_dir: Path) -> dict[str, Any]:
                 Evidence("app/skills.py", ("banword", "mute", "unmute")),
                 Evidence("app/router.py", ("welcome_new_member", "flood_mute", "escalation_enabled")),
                 Evidence("web-admin/src/views/KeywordRulesView.vue", ("/keyword-rules", "keyword", "response")),
-                Evidence("web-admin/src/views/GroupsView.vue", ("近期违规", "escalation_enabled", "violation_window_hours")),
+                Evidence("web-admin/src/views/GroupsView.vue", ("近期违规", "moderationTemplates", "观察模式")),
                 Evidence("web-admin/src/views/LogsView.vue", ("auditFilters", "target_id", "detail_json")),
                 Evidence("tests/test_router.py", ("test_admin_can_mute_and_unmute_user", "test_flood_control_escalates_repeat_violations")),
                 Evidence("tests/test_admin_api.py", ("welcome_enabled", "test_audit_logs_can_be_filtered_for_moderation_history")),

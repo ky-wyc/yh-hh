@@ -84,6 +84,18 @@
 
       <h3 class="section-title">基础群管</h3>
       <el-form :model="moderationForm" label-width="120px">
+        <el-form-item label="策略模板">
+          <el-button-group class="template-group">
+            <el-button
+              v-for="template in moderationTemplates"
+              :key="template.key"
+              size="small"
+              @click="applyModerationTemplate(template.key)"
+            >
+              {{ template.label }}
+            </el-button>
+          </el-button-group>
+        </el-form-item>
         <el-form-item label="新人欢迎">
           <el-switch v-model="moderationForm.welcome_enabled" />
         </el-form-item>
@@ -195,6 +207,9 @@ type GroupDetail = GroupRow & {
   skills: SkillSetting[]
 }
 
+type ModerationConfig = GroupDetail['moderation']
+type ModerationTemplateKey = 'observe' | 'loose' | 'standard' | 'strict'
+
 const groups = ref<GroupRow[]>([])
 const globalSkills = ref<SkillSetting[]>([])
 const groupDetail = ref<GroupDetail | null>(null)
@@ -220,6 +235,69 @@ const moderationForm = reactive({
   escalation_multiplier: 2,
   escalation_max_mute_seconds: 3600
 })
+
+const moderationTemplates: Array<{
+  key: ModerationTemplateKey
+  label: string
+  values: Omit<ModerationConfig, 'welcome_enabled' | 'welcome_message'>
+}> = [
+  {
+    key: 'observe',
+    label: '观察模式',
+    values: {
+      flood_enabled: false,
+      flood_message_count: 8,
+      flood_window_seconds: 10,
+      flood_mute_seconds: 60,
+      violation_window_hours: 24,
+      escalation_enabled: false,
+      escalation_multiplier: 2,
+      escalation_max_mute_seconds: 3600
+    }
+  },
+  {
+    key: 'loose',
+    label: '宽松',
+    values: {
+      flood_enabled: true,
+      flood_message_count: 8,
+      flood_window_seconds: 10,
+      flood_mute_seconds: 60,
+      violation_window_hours: 24,
+      escalation_enabled: false,
+      escalation_multiplier: 2,
+      escalation_max_mute_seconds: 3600
+    }
+  },
+  {
+    key: 'standard',
+    label: '标准',
+    values: {
+      flood_enabled: true,
+      flood_message_count: 6,
+      flood_window_seconds: 10,
+      flood_mute_seconds: 120,
+      violation_window_hours: 24,
+      escalation_enabled: true,
+      escalation_multiplier: 2,
+      escalation_max_mute_seconds: 1800
+    }
+  },
+  {
+    key: 'strict',
+    label: '严格',
+    values: {
+      flood_enabled: true,
+      flood_message_count: 4,
+      flood_window_seconds: 10,
+      flood_mute_seconds: 300,
+      violation_window_hours: 24,
+      escalation_enabled: true,
+      escalation_multiplier: 3,
+      escalation_max_mute_seconds: 3600
+    }
+  }
+]
 
 const overviewItems = [
   { key: 'messages', label: '消息' },
@@ -312,6 +390,13 @@ async function saveModeration() {
   }
 }
 
+function applyModerationTemplate(key: ModerationTemplateKey) {
+  const template = moderationTemplates.find((item) => item.key === key)
+  if (!template) return
+  Object.assign(moderationForm, template.values)
+  ElMessage.success(`已套用${template.label}`)
+}
+
 function groupSkillValue(skill: SkillSetting) {
   return skill.group_enabled === null ? skill.global_enabled : skill.group_enabled
 }
@@ -383,6 +468,12 @@ onMounted(() => {
 .section-title {
   margin: 22px 0 12px;
   font-size: 16px;
+}
+
+.template-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 0;
 }
 
 .metric-card {
