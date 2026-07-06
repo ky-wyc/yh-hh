@@ -98,7 +98,7 @@ async def test_knowledge_index_uses_configured_embedding_service(repo):
     assert fake.calls[0][0].model == "embed-model"
 
 
-async def test_knowledge_index_records_embedding_failure(repo):
+async def test_knowledge_index_records_embedding_degradation(repo):
     fake = FakeEmbeddingService(error=RuntimeError("embedding unavailable"))
     custom_repo = Repository(repo.session, repo.settings, fake)
     await custom_repo.update_embedding_config({"provider": "openai_compatible", "api_key": "secret"})
@@ -111,6 +111,6 @@ async def test_knowledge_index_records_embedding_failure(repo):
         created_by="admin",
     )
 
-    assert document.index_status == "failed"
-    assert document.chunk_count == 0
+    assert document.index_status == "completed"
+    assert document.chunk_count >= 1
     assert "embedding unavailable" in document.index_error

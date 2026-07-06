@@ -626,6 +626,58 @@ def test_knowledge_docs_can_be_imported_from_xlsx_for_multiple_groups(tmp_path):
         assert audit.json()[0]["action"] == "knowledge_docs_import"
 
 
+def test_imported_knowledge_stays_keyword_searchable_when_embedding_fails(tmp_path):
+    settings = Settings(
+        DATABASE_URL=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",
+        REDIS_URL="",
+        ADMIN_USERNAME="admin",
+        ADMIN_PASSWORD="secret",
+        EMBEDDING_PROVIDER="openai_compatible",
+        EMBEDDING_API_KEY="",
+    )
+    app = create_app(settings)
+
+    with TestClient(app) as client:
+        token = client.post(
+            "/api/auth/login", json={"username": "admin", "password": "secret"}
+        ).json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        client.patch("/api/groups/10001", json={"name": "Docs"}, headers=headers)
+
+        imported = client.post(
+            "/api/knowledge-docs/import",
+            data={
+                "title": "Deploy FAQ",
+                "group_ids": json.dumps(["10001"]),
+                "enabled": "true",
+            },
+            files={
+                "file": (
+                    "faq.xlsx",
+                    build_xlsx_bytes(),
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+            },
+            headers=headers,
+        )
+
+        assert imported.status_code == 200
+        document = imported.json()["documents"][0]
+        assert document["chunk_count"] >= 1
+        assert document["index_status"] == "completed"
+        assert "embedding api key is not configured" in document["index_error"]
+
+        searched = client.post(
+            "/api/knowledge-search",
+            json={"group_id": "10001", "query": "Docker"},
+            headers=headers,
+        )
+        assert searched.status_code == 200
+        results = searched.json()["results"]
+        assert results[0]["title"] == "Deploy FAQ"
+        assert "Docker Compose" in results[0]["content"]
+
+
 def test_knowledge_doc_can_be_reindexed_from_admin(tmp_path):
     settings = Settings(
         DATABASE_URL=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",

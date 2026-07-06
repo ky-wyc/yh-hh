@@ -836,32 +836,46 @@ class Repository:
 
     async def rebuild_knowledge_chunks(self, document: KnowledgeDocument) -> None:
         await self.session.execute(delete(KnowledgeChunk).where(KnowledgeChunk.document_id == document.id))
-        try:
-            config = await self.get_embedding_config()
-            chunks = chunk_text(document.content)
-            chunk_records: list[tuple[KnowledgeChunk, list[float]]] = []
-            for index, content in enumerate(chunks):
-                embedding = await self.embedding_service.embed(config, content)
-                chunk = KnowledgeChunk(
-                    document_id=document.id,
-                    group_id=document.group_id,
-                    title=document.title,
-                    chunk_index=index,
-                    content=content,
-                    embedding_json=json.dumps(embedding, ensure_ascii=False),
-                )
-                self.session.add(chunk)
+        chunks = chunk_text(document.content)
+        chunk_records: list[tuple[KnowledgeChunk, list[float]]] = []
+        embedding_error = ""
+        config = await self.get_embedding_config()
+        for index, content in enumerate(chunks):
+            embedding: list[float] = []
+            if not embedding_error:
+                try:
+                    embedding = await self.embedding_service.embed(config, content)
+                except Exception as exc:
+                    embedding_error = str(exc)[:1000]
+            chunk = KnowledgeChunk(
+                document_id=document.id,
+                group_id=document.group_id,
+                title=document.title,
+                chunk_index=index,
+                content=content,
+                embedding_json=json.dumps(embedding, ensure_ascii=False),
+            )
+            self.session.add(chunk)
+            if embedding:
                 chunk_records.append((chunk, embedding))
-            document.chunk_count = len(chunks)
+        document.chunk_count = len(chunks)
+        if not chunks:
+            document.index_status = "failed"
+            document.index_error = "document has no indexable text"
+        elif embedding_error:
+            document.index_status = "completed"
+            document.index_error = embedding_error
+        else:
             document.index_status = "vectorized"
             document.index_error = ""
-            await self.session.flush()
+        await self.session.flush()
+        try:
             await self._store_pgvector_embeddings(chunk_records)
         except Exception as exc:
-            document.chunk_count = 0
-            document.index_status = "failed"
-            document.index_error = str(exc)[:1000]
-        await self.session.flush()
+            if not embedding_error:
+                document.index_status = "completed"
+                document.index_error = str(exc)[:1000]
+            await self.session.flush()
 
     async def _store_pgvector_embeddings(
         self,
