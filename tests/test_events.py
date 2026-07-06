@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from app.config import Settings
-from app.events import extract_text, normalize_group_message, remove_bot_mentions
+from app.events import extract_text, normalize_group_message, normalize_group_notice, remove_bot_mentions
 
 
 def group_event(message, *, message_id: int = 1):
@@ -122,3 +122,21 @@ def test_normalize_group_message_ignores_empty_or_non_text_messages():
         )
         is None
     )
+
+
+def test_normalize_group_increase_notice():
+    event = normalize_group_notice(
+        {
+            "post_type": "notice",
+            "notice_type": "group_increase",
+            "sub_type": "approve",
+            "group_id": 10001,
+            "user_id": 20002,
+            "operator_id": 30003,
+        }
+    )
+
+    assert event is not None
+    assert event.group_id == "10001"
+    assert event.user_id == "20002"
+    assert event.operator_id == "30003"

@@ -82,6 +82,37 @@
         </el-col>
       </el-row>
 
+      <h3 class="section-title">基础群管</h3>
+      <el-form :model="moderationForm" label-width="120px">
+        <el-form-item label="新人欢迎">
+          <el-switch v-model="moderationForm.welcome_enabled" />
+        </el-form-item>
+        <el-form-item label="欢迎语">
+          <el-input
+            v-model="moderationForm.welcome_message"
+            type="textarea"
+            :rows="2"
+            maxlength="500"
+            show-word-limit
+          />
+        </el-form-item>
+        <el-form-item label="刷屏检测">
+          <el-switch v-model="moderationForm.flood_enabled" />
+        </el-form-item>
+        <el-form-item label="消息阈值">
+          <el-input-number v-model="moderationForm.flood_message_count" :min="3" :max="50" />
+        </el-form-item>
+        <el-form-item label="统计窗口秒">
+          <el-input-number v-model="moderationForm.flood_window_seconds" :min="3" :max="300" />
+        </el-form-item>
+        <el-form-item label="禁言秒数">
+          <el-input-number v-model="moderationForm.flood_mute_seconds" :min="10" :max="3600" />
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" :loading="savingModeration" @click="saveModeration">保存群管配置</el-button>
+        </el-form-item>
+      </el-form>
+
       <h3 class="section-title">本群 Skill 开关</h3>
       <el-table :data="groupDetail.skills" border>
         <el-table-column prop="display_name" label="功能" width="130" />
@@ -122,6 +153,14 @@ type SkillSetting = {
 }
 
 type GroupDetail = GroupRow & {
+  moderation: {
+    welcome_enabled: boolean
+    welcome_message: string
+    flood_enabled: boolean
+    flood_message_count: number
+    flood_window_seconds: number
+    flood_mute_seconds: number
+  }
   overview: Record<string, number>
   skills: SkillSetting[]
 }
@@ -132,11 +171,20 @@ const groupDetail = ref<GroupDetail | null>(null)
 const creating = ref(false)
 const skillsLoading = ref(false)
 const detailVisible = ref(false)
+const savingModeration = ref(false)
 const newGroup = reactive({
   qq_group_id: '',
   name: '',
   enabled: true,
   reply_mode: 'mention_only'
+})
+const moderationForm = reactive({
+  welcome_enabled: false,
+  welcome_message: '欢迎 {user_id} 加入本群。',
+  flood_enabled: false,
+  flood_message_count: 6,
+  flood_window_seconds: 10,
+  flood_mute_seconds: 60
 })
 
 const overviewItems = [
@@ -180,6 +228,7 @@ async function openDetail(groupId: string) {
   try {
     const { data } = await api.get(`/groups/${groupId}`)
     groupDetail.value = data
+    Object.assign(moderationForm, data.moderation)
     detailVisible.value = true
   } catch (error: any) {
     ElMessage.error(error?.response?.data?.detail || '加载群详情失败')
@@ -212,6 +261,20 @@ async function toggleGroupSkill(skill: SkillSetting, value: string | number | bo
   } catch (error: any) {
     ElMessage.error(error?.response?.data?.detail || '更新本群 Skill 开关失败')
     await openDetail(groupDetail.value.qq_group_id)
+  }
+}
+
+async function saveModeration() {
+  if (!groupDetail.value) return
+  savingModeration.value = true
+  try {
+    await api.patch(`/groups/${groupDetail.value.qq_group_id}`, { ...moderationForm })
+    ElMessage.success('群管配置已保存')
+    await openDetail(groupDetail.value.qq_group_id)
+  } catch (error: any) {
+    ElMessage.error(error?.response?.data?.detail || '保存群管配置失败')
+  } finally {
+    savingModeration.value = false
   }
 }
 

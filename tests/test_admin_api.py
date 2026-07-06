@@ -158,6 +158,43 @@ def test_message_logs_include_onebot_message_id(tmp_path):
         assert logs.json()[0]["message_id"] == "991"
 
 
+def test_onebot_group_increase_notice_sends_welcome_action(tmp_path):
+    settings = Settings(
+        DATABASE_URL=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",
+        REDIS_URL="",
+        ADMIN_USERNAME="admin",
+        ADMIN_PASSWORD="secret",
+        ALLOWED_GROUPS="10001",
+    )
+    app = create_app(settings)
+
+    with TestClient(app) as client:
+        token = client.post(
+            "/api/auth/login", json={"username": "admin", "password": "secret"}
+        ).json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        client.patch(
+            "/api/groups/10001",
+            json={"welcome_enabled": True, "welcome_message": "欢迎 {user_id}"},
+            headers=headers,
+        )
+
+        with client.websocket_connect("/onebot/ws") as websocket:
+            websocket.send_json(
+                {
+                    "post_type": "notice",
+                    "notice_type": "group_increase",
+                    "group_id": 10001,
+                    "user_id": 20002,
+                }
+            )
+            action = websocket.receive_json()
+
+        assert action["action"] == "send_group_msg"
+        assert action["params"]["group_id"] == 10001
+        assert action["params"]["message"] == "欢迎 20002"
+
+
 def test_bot_settings_can_update_default_reply_mode(tmp_path):
     settings = Settings(
         DATABASE_URL=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",
@@ -550,7 +587,17 @@ def test_skill_settings_and_group_detail_can_be_managed_from_admin(tmp_path):
 
         await_group = client.patch(
             "/api/groups/10001",
-            json={"enabled": True, "reply_mode": "mention_only", "name": "测试群"},
+            json={
+                "enabled": True,
+                "reply_mode": "mention_only",
+                "name": "测试群",
+                "welcome_enabled": True,
+                "welcome_message": "欢迎 {user_id}",
+                "flood_enabled": True,
+                "flood_message_count": 4,
+                "flood_window_seconds": 20,
+                "flood_mute_seconds": 90,
+            },
             headers=headers,
         )
         global_ai = client.patch(
@@ -579,6 +626,10 @@ def test_skill_settings_and_group_detail_can_be_managed_from_admin(tmp_path):
         assert skill_map["dice"]["effective_enabled"] is False
         assert detail.status_code == 200
         assert detail.json()["name"] == "测试群"
+        assert detail.json()["moderation"]["welcome_enabled"] is True
+        assert detail.json()["moderation"]["welcome_message"] == "欢迎 {user_id}"
+        assert detail.json()["moderation"]["flood_message_count"] == 4
+        assert detail.json()["moderation"]["flood_mute_seconds"] == 90
         assert "messages" in detail.json()["overview"]
         assert any(item["skill_name"] == "dice" for item in detail.json()["skills"])
 

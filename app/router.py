@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any
 
 from app.cache import RateLimitExceeded
 from app.config import Settings
-from app.events import BotEvent
+from app.events import BotEvent, GroupNoticeEvent
 from app.llm import LLMService
+from app.models import now_utc
 from app.repository import Repository
 from app.skills import SkillContext, SkillRegistry
 
@@ -51,7 +53,7 @@ class MessageRouter:
             await repo.mark_message(message_log, "dropped", "group_not_allowed")
             return RouteOutcome(status="dropped", reason="group_not_allowed")
 
-        await repo.ensure_user(event.user_id, event.nickname)
+        user = await repo.ensure_user(event.user_id, event.nickname)
         group = await repo.ensure_group(event.group_id)
 
         if not group.enabled:
@@ -72,6 +74,16 @@ class MessageRouter:
         except RateLimitExceeded as exc:
             await repo.mark_message(message_log, "dropped", f"rate_limited:{exc}")
             return RouteOutcome(status="dropped", reason="rate_limited")
+
+        flood_outcome = await self._handle_flood_control(
+            event,
+            message_log,
+            repo,
+            sender,
+            user_role=user.role,
+        )
+        if flood_outcome is not None:
+            return flood_outcome
 
         await self.rate_limiter.append_context(
             event.group_id,
@@ -116,6 +128,7 @@ class MessageRouter:
                     command_prefix=bot_settings.command_prefix,
                     recent_context=recent_context,
                     enabled_skills=enabled_skills,
+                    sender=sender,
                 ),
             )
             if not await self._send_group_reply(event, message_log, repo, sender, result.text):
@@ -230,6 +243,118 @@ class MessageRouter:
 
         await repo.mark_message(message_log, "observed", "no_trigger")
         return RouteOutcome(status="observed", reason="no_trigger")
+
+    async def handle_group_notice(
+        self,
+        event: GroupNoticeEvent,
+        repo: Repository,
+        sender: Any,
+    ) -> RouteOutcome:
+        bot_settings = await repo.get_bot_settings()
+        allowed_groups = bot_settings.allowed_group_set
+        if allowed_groups and event.group_id not in allowed_groups:
+            return RouteOutcome(status="dropped", reason="group_not_allowed")
+
+        group = await repo.ensure_group(event.group_id)
+        if not group.enabled:
+            return RouteOutcome(status="dropped", reason="group_disabled")
+
+        config = repo.group_moderation_config(group)
+        if not config.welcome_enabled:
+            return RouteOutcome(status="observed", reason="welcome_disabled")
+        if not await repo.effective_skill_enabled(skill_name="admin-lite", group_id=event.group_id):
+            return RouteOutcome(status="observed", reason="admin_lite_disabled")
+
+        text = (
+            config.welcome_message.replace("{user_id}", event.user_id).replace(
+                "{group_id}", event.group_id
+            )
+        )
+        try:
+            await sender.send_group_message(event.group_id, text)
+        except Exception:
+            return RouteOutcome(status="error", reason="send_failed")
+
+        await repo.audit(
+            action="welcome_new_member",
+            actor_role="system",
+            group_id=event.group_id,
+            target_type="user",
+            target_id=event.user_id,
+        )
+        return RouteOutcome(
+            status="handled",
+            reason="welcome",
+            replied=True,
+            reply_text=text,
+            skill_name="admin-lite",
+        )
+
+    async def _handle_flood_control(
+        self,
+        event: BotEvent,
+        message_log: Any,
+        repo: Repository,
+        sender: Any,
+        *,
+        user_role: str,
+    ) -> RouteOutcome | None:
+        if user_role in {"super_admin", "group_admin"}:
+            return None
+        if not await repo.effective_skill_enabled(skill_name="admin-lite", group_id=event.group_id):
+            return None
+        group = await repo.get_group_by_qq_id(event.group_id)
+        if group is None:
+            return None
+        config = repo.group_moderation_config(group)
+        if not config.flood_enabled:
+            return None
+        since = now_utc() - timedelta(seconds=config.flood_window_seconds)
+        count = await repo.recent_user_message_count(
+            group_id=event.group_id,
+            user_id=event.user_id,
+            since=since,
+        )
+        if count < config.flood_message_count:
+            return None
+
+        try:
+            if hasattr(sender, "mute_user"):
+                await sender.mute_user(event.group_id, event.user_id, config.flood_mute_seconds)
+            text = f"检测到刷屏，已临时禁言 {config.flood_mute_seconds} 秒。"
+            await sender.send_group_message(event.group_id, text)
+        except Exception as exc:
+            await repo.mark_message(message_log, "error", f"flood_mute_failed:{type(exc).__name__}")
+            return RouteOutcome(status="error", reason="send_failed")
+
+        await repo.audit(
+            action="flood_mute",
+            actor_role="system",
+            group_id=event.group_id,
+            target_type="user",
+            target_id=event.user_id,
+            detail={
+                "message_count": count,
+                "window_seconds": config.flood_window_seconds,
+                "mute_seconds": config.flood_mute_seconds,
+            },
+        )
+        await repo.save_reply(
+            group_id=event.group_id,
+            user_id=event.user_id,
+            trigger_type="flood_control",
+            input_message_id=event.message_id,
+            content=text,
+            skill_name="admin-lite",
+        )
+        await repo.mark_message(message_log, "handled", "flood_mute")
+        return RouteOutcome(
+            status="handled",
+            reason="flood_mute",
+            replied=True,
+            reply_text=text,
+            skill_name="admin-lite",
+        )
 
     async def _send_group_reply(
         self,

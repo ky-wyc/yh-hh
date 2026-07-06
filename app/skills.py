@@ -31,6 +31,8 @@ COMMAND_SKILLS: dict[str, str] = {
     "forget": "memory",
     "warn": "admin-lite",
     "banword": "admin-lite",
+    "mute": "admin-lite",
+    "unmute": "admin-lite",
 }
 
 
@@ -44,6 +46,7 @@ class SkillContext:
     command_prefix: str = "/"
     recent_context: list[str] | None = None
     enabled_skills: set[str] | None = None
+    sender: object | None = None
 
 
 @dataclass(slots=True)
@@ -66,6 +69,8 @@ class SkillRegistry:
             "forget": self.forget,
             "warn": self.warn,
             "banword": self.banword,
+            "mute": self.mute,
+            "unmute": self.unmute,
         }
 
     @property
@@ -109,6 +114,8 @@ class SkillRegistry:
             lines.append(f"{prefix}forget 记忆ID - 删除自己的记忆")
         if "admin-lite" in enabled:
             lines.append(f"{prefix}warn @用户 原因 - 管理员警告")
+            lines.append(f"{prefix}mute @用户 秒数 原因 - 临时禁言")
+            lines.append(f"{prefix}unmute @用户 原因 - 解除禁言")
             lines.append(f"{prefix}banword add/remove/list - 关键词拦截")
         text = "\n".join(lines)
         return SkillResult(text=text, skill_name="help")
@@ -306,6 +313,56 @@ class SkillRegistry:
         )
         return SkillResult(text=f"已记录警告：{args.strip()}", skill_name="admin-lite")
 
+    async def mute(self, args: str, ctx: SkillContext) -> SkillResult:
+        user = await ctx.repo.ensure_user(ctx.user_id)
+        if user.role not in {"super_admin", "group_admin"}:
+            return SkillResult(text="权限不足：只有管理员可以执行禁言。", skill_name="admin-lite")
+        target_id, rest = self._parse_target_user(args)
+        if not target_id:
+            return SkillResult(
+                text=f"用法：{ctx.command_prefix}mute @用户 秒数 原因", skill_name="admin-lite"
+            )
+        parts = rest.split(maxsplit=1)
+        if not parts or not parts[0].isdigit():
+            return SkillResult(text="请提供禁言秒数。", skill_name="admin-lite")
+        duration = max(10, min(int(parts[0]), 3600))
+        reason = parts[1].strip() if len(parts) > 1 else "manual_mute"
+        if ctx.sender is not None and hasattr(ctx.sender, "mute_user"):
+            await ctx.sender.mute_user(ctx.group_id, target_id, duration)
+        await ctx.repo.audit(
+            action="mute",
+            actor_user_id=ctx.user_id,
+            actor_role=user.role,
+            group_id=ctx.group_id,
+            target_type="user",
+            target_id=target_id,
+            detail={"duration": duration, "reason": reason},
+        )
+        return SkillResult(text=f"已临时禁言 {target_id} {duration} 秒。", skill_name="admin-lite")
+
+    async def unmute(self, args: str, ctx: SkillContext) -> SkillResult:
+        user = await ctx.repo.ensure_user(ctx.user_id)
+        if user.role not in {"super_admin", "group_admin"}:
+            return SkillResult(text="权限不足：只有管理员可以解除禁言。", skill_name="admin-lite")
+        target_id, rest = self._parse_target_user(args)
+        if not target_id:
+            return SkillResult(
+                text=f"用法：{ctx.command_prefix}unmute @用户 原因", skill_name="admin-lite"
+            )
+        reason = rest.strip() or "manual_unmute"
+        if ctx.sender is not None and hasattr(ctx.sender, "mute_user"):
+            await ctx.sender.mute_user(ctx.group_id, target_id, 0)
+        await ctx.repo.audit(
+            action="unmute",
+            actor_user_id=ctx.user_id,
+            actor_role=user.role,
+            group_id=ctx.group_id,
+            target_type="user",
+            target_id=target_id,
+            detail={"reason": reason},
+        )
+        return SkillResult(text=f"已解除 {target_id} 的禁言。", skill_name="admin-lite")
+
     async def banword(self, args: str, ctx: SkillContext) -> SkillResult:
         user = await ctx.repo.ensure_user(ctx.user_id)
         if user.role not in {"super_admin", "group_admin"}:
@@ -365,3 +422,16 @@ class SkillRegistry:
         return SkillResult(
             text=f"用法：{ctx.command_prefix}banword add/remove/list", skill_name="admin-lite"
         )
+
+    @staticmethod
+    def _parse_target_user(args: str) -> tuple[str, str]:
+        stripped = args.strip()
+        if not stripped:
+            return "", ""
+        at_match = re.match(r"\[CQ:at,qq=(\d+)\]\s*(.*)", stripped)
+        if at_match:
+            return at_match.group(1), at_match.group(2).strip()
+        target, _, rest = stripped.partition(" ")
+        if target.isdigit():
+            return target, rest.strip()
+        return "", stripped

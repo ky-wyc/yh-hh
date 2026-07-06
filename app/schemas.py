@@ -27,6 +27,12 @@ class GroupUpdate(BaseModel):
     enabled: bool | None = None
     reply_mode: str | None = None
     name: str | None = None
+    welcome_enabled: bool | None = None
+    welcome_message: str | None = None
+    flood_enabled: bool | None = None
+    flood_message_count: int | None = Field(default=None, ge=3, le=50)
+    flood_window_seconds: int | None = Field(default=None, ge=3, le=300)
+    flood_mute_seconds: int | None = Field(default=None, ge=10, le=3600)
 
     @field_validator("reply_mode")
     @classmethod
@@ -34,6 +40,25 @@ class GroupUpdate(BaseModel):
         if value is not None and value not in REPLY_MODES:
             raise ValueError(f"reply_mode must be one of: {', '.join(sorted(REPLY_MODES))}")
         return value
+
+    @field_validator("welcome_message")
+    @classmethod
+    def validate_welcome_message(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        stripped = value.strip()
+        if len(stripped) > 500:
+            raise ValueError("welcome_message must be 500 characters or fewer")
+        return stripped
+
+
+class GroupModerationConfigOut(BaseModel):
+    welcome_enabled: bool
+    welcome_message: str
+    flood_enabled: bool
+    flood_message_count: int
+    flood_window_seconds: int
+    flood_mute_seconds: int
 
 
 class SkillSettingOut(BaseModel):
@@ -63,6 +88,7 @@ class GroupDetailOut(BaseModel):
     name: str
     enabled: bool
     reply_mode: str
+    moderation: GroupModerationConfigOut
     overview: dict[str, int]
     skills: list[SkillSettingOut]
 

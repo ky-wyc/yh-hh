@@ -67,6 +67,16 @@ class BotConfig:
 
 
 @dataclass(slots=True)
+class GroupModerationConfig:
+    welcome_enabled: bool = False
+    welcome_message: str = "欢迎 {user_id} 加入本群。"
+    flood_enabled: bool = False
+    flood_message_count: int = 6
+    flood_window_seconds: int = 10
+    flood_mute_seconds: int = 60
+
+
+@dataclass(slots=True)
 class KnowledgeSearchResult:
     document_id: int
     chunk_id: int
@@ -134,6 +144,50 @@ class Repository:
         for key, value in changes.items():
             if value is not None and hasattr(group, key):
                 setattr(group, key, value)
+        await self.session.flush()
+        return group
+
+    def group_moderation_config(self, group: Group) -> GroupModerationConfig:
+        try:
+            config = json.loads(group.config_json or "{}")
+            if not isinstance(config, dict):
+                config = {}
+        except json.JSONDecodeError:
+            config = {}
+        moderation = config.get("moderation") if isinstance(config.get("moderation"), dict) else {}
+        return GroupModerationConfig(
+            welcome_enabled=bool(moderation.get("welcome_enabled", False)),
+            welcome_message=str(
+                moderation.get("welcome_message") or "欢迎 {user_id} 加入本群。"
+            )[:500],
+            flood_enabled=bool(moderation.get("flood_enabled", False)),
+            flood_message_count=max(3, min(int(moderation.get("flood_message_count") or 6), 50)),
+            flood_window_seconds=max(
+                3, min(int(moderation.get("flood_window_seconds") or 10), 300)
+            ),
+            flood_mute_seconds=max(
+                10, min(int(moderation.get("flood_mute_seconds") or 60), 3600)
+            ),
+        )
+
+    async def update_group_moderation_config(
+        self,
+        qq_group_id: str,
+        changes: dict[str, Any],
+    ) -> Group:
+        group = await self.ensure_group(qq_group_id)
+        try:
+            config = json.loads(group.config_json or "{}")
+            if not isinstance(config, dict):
+                config = {}
+        except json.JSONDecodeError:
+            config = {}
+        moderation = config.get("moderation") if isinstance(config.get("moderation"), dict) else {}
+        for key, value in changes.items():
+            if value is not None:
+                moderation[key] = value
+        config["moderation"] = moderation
+        group.config_json = json.dumps(config, ensure_ascii=False)
         await self.session.flush()
         return group
 
@@ -889,6 +943,23 @@ class Repository:
             .limit(limit)
         )
         return list(reversed(result.scalars().all()))
+
+    async def recent_user_message_count(
+        self,
+        *,
+        group_id: str,
+        user_id: str,
+        since: datetime,
+    ) -> int:
+        count = await self.session.scalar(
+            select(func.count(MessageLog.id)).where(
+                MessageLog.group_id == group_id,
+                MessageLog.user_id == user_id,
+                MessageLog.created_at >= since,
+                MessageLog.status.in_(["received", "handled", "observed"]),
+            )
+        )
+        return count or 0
 
     async def audit(
         self,

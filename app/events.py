@@ -21,6 +21,16 @@ class BotEvent:
     nickname: str = ""
 
 
+@dataclass(slots=True)
+class GroupNoticeEvent:
+    notice_type: str
+    sub_type: str
+    group_id: str
+    user_id: str
+    operator_id: str
+    raw: dict[str, Any]
+
+
 def extract_text(message: Any) -> str:
     if isinstance(message, str):
         return message
@@ -95,4 +105,22 @@ def normalize_group_message(raw: dict[str, Any], settings: Settings) -> BotEvent
         at_bot=is_at_bot(raw, text, settings),
         dedup_key=dedup_key,
         nickname=str(sender.get("nickname") or sender.get("card") or ""),
+    )
+
+
+def normalize_group_notice(raw: dict[str, Any]) -> GroupNoticeEvent | None:
+    if raw.get("post_type") != "notice":
+        return None
+    notice_type = str(raw.get("notice_type") or "")
+    group_id = str(raw.get("group_id") or "")
+    user_id = str(raw.get("user_id") or "")
+    if notice_type != "group_increase" or not group_id or not user_id:
+        return None
+    return GroupNoticeEvent(
+        notice_type=notice_type,
+        sub_type=str(raw.get("sub_type") or ""),
+        group_id=group_id,
+        user_id=user_id,
+        operator_id=str(raw.get("operator_id") or ""),
+        raw=raw,
     )

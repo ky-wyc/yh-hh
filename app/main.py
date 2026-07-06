@@ -12,7 +12,7 @@ from app.auth import TokenStore
 from app.cache import create_rate_limiter
 from app.config import Settings, get_settings
 from app.db import create_engine, create_session_factory, init_db
-from app.events import normalize_group_message
+from app.events import normalize_group_message, normalize_group_notice
 from app.llm import LLMService
 from app.onebot import OneBotConnectionManager, websocket_event_stream
 from app.repository import Repository
@@ -81,7 +81,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             async for payload in websocket_event_stream(websocket):
                 app.state.onebot.record_event()
                 event = normalize_group_message(payload, settings)
+                notice = normalize_group_notice(payload)
                 if event is None:
+                    if notice is None:
+                        continue
+                    async with app.state.session_factory() as session:
+                        repo = Repository(session, settings)
+                        try:
+                            await app.state.message_router.handle_group_notice(
+                                notice,
+                                repo,
+                                app.state.onebot,
+                            )
+                            await session.commit()
+                        except Exception as exc:
+                            logger.exception("Failed to process OneBot notice")
+                            await session.rollback()
+                            app.state.onebot.status.last_error = str(exc)
                     continue
                 async with app.state.session_factory() as session:
                     repo = Repository(session, settings)

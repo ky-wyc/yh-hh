@@ -15,6 +15,7 @@ from app.schemas import (
     BotSettingsUpdate,
     GroupUpdate,
     GroupDetailOut,
+    GroupModerationConfigOut,
     KeywordRuleCreate,
     KeywordRuleOut,
     KeywordRuleUpdate,
@@ -157,6 +158,18 @@ def audit_safe_detail(value):
     return value
 
 
+def group_moderation_out(repo: Repository, group) -> GroupModerationConfigOut:
+    config = repo.group_moderation_config(group)
+    return GroupModerationConfigOut(
+        welcome_enabled=config.welcome_enabled,
+        welcome_message=config.welcome_message,
+        flood_enabled=config.flood_enabled,
+        flood_message_count=config.flood_message_count,
+        flood_window_seconds=config.flood_window_seconds,
+        flood_mute_seconds=config.flood_mute_seconds,
+    )
+
+
 async def skill_setting_out(repo: Repository, skill_name: str, group_id: str = "") -> SkillSettingOut:
     catalog = SKILL_CATALOG[skill_name]
     global_setting = await repo.get_skill_setting(skill_name=skill_name, group_id="")
@@ -258,6 +271,7 @@ async def get_group_detail(
         name=group.name,
         enabled=group.enabled,
         reply_mode=group.reply_mode,
+        moderation=group_moderation_out(repo, group),
         overview=await repo.group_overview(qq_group_id),
         skills=[await skill_setting_out(repo, name, qq_group_id) for name in sorted(SKILL_CATALOG)],
     )
@@ -277,13 +291,34 @@ async def patch_group(
         reply_mode=payload.reply_mode,
         name=payload.name,
     )
-    await repo.audit(action="group_update", target_type="group", target_id=qq_group_id)
+    moderation_changes = {
+        key: value
+        for key, value in payload.model_dump(exclude_unset=True).items()
+        if key
+        in {
+            "welcome_enabled",
+            "welcome_message",
+            "flood_enabled",
+            "flood_message_count",
+            "flood_window_seconds",
+            "flood_mute_seconds",
+        }
+    }
+    if moderation_changes:
+        group = await repo.update_group_moderation_config(qq_group_id, moderation_changes)
+    await repo.audit(
+        action="group_update",
+        target_type="group",
+        target_id=qq_group_id,
+        detail={"moderation": bool(moderation_changes)},
+    )
     await session.commit()
     return {
         "qq_group_id": group.qq_group_id,
         "name": group.name,
         "enabled": group.enabled,
         "reply_mode": group.reply_mode,
+        "moderation": group_moderation_out(repo, group).model_dump(),
     }
 
 

@@ -5,7 +5,7 @@ import json
 import httpx
 
 from app.cache import MemoryRateLimiter
-from app.events import normalize_group_message
+from app.events import normalize_group_message, normalize_group_notice
 from app.llm import LLMService
 from app.models import User
 from app.repository import Repository
@@ -504,6 +504,79 @@ async def test_ordinary_user_cannot_warn(settings, repo, message_router, sender)
 
     assert outcome.replied is True
     assert "权限不足" in sender.group_messages[0][1]
+
+
+async def test_admin_can_mute_and_unmute_user(settings, repo, message_router, sender):
+    admin = User(qq_id="20001", role="group_admin")
+    repo.session.add(admin)
+    await repo.session.flush()
+
+    mute_event = normalize_group_message(
+        group_event("/mute [CQ:at,qq=20002] 120 刷屏", message_id=46),
+        settings,
+    )
+    unmute_event = normalize_group_message(
+        group_event("/unmute [CQ:at,qq=20002] 已处理", message_id=47),
+        settings,
+    )
+
+    mute = await message_router.handle(mute_event, repo, sender)
+    unmute = await message_router.handle(unmute_event, repo, sender)
+
+    assert mute.replied is True
+    assert unmute.replied is True
+    assert ("10001", "mute:20002:120") in sender.group_messages
+    assert ("10001", "mute:20002:0") in sender.group_messages
+    audit_logs = await repo.recent_audit_logs()
+    assert {audit_logs[0].action, audit_logs[1].action} == {"mute", "unmute"}
+
+
+async def test_flood_control_mutes_normal_user(settings, repo, message_router, sender):
+    await repo.update_group_moderation_config(
+        "10001",
+        {
+            "flood_enabled": True,
+            "flood_message_count": 3,
+            "flood_window_seconds": 30,
+            "flood_mute_seconds": 45,
+        },
+    )
+
+    for index in range(3):
+        event = normalize_group_message(group_event(f"刷屏 {index}", message_id=60 + index), settings)
+        outcome = await message_router.handle(event, repo, sender)
+
+    assert outcome.replied is True
+    assert outcome.reason == "flood_mute"
+    assert ("10001", "mute:20001:45") in sender.group_messages
+    assert sender.group_messages[-1] == ("10001", "检测到刷屏，已临时禁言 45 秒。")
+    audit_logs = await repo.recent_audit_logs()
+    assert audit_logs[0].action == "flood_mute"
+
+
+async def test_group_increase_notice_sends_welcome(settings, repo, message_router, sender):
+    await repo.update_group_moderation_config(
+        "10001",
+        {
+            "welcome_enabled": True,
+            "welcome_message": "欢迎 {user_id} 来到 {group_id}",
+        },
+    )
+    event = normalize_group_notice(
+        {
+            "post_type": "notice",
+            "notice_type": "group_increase",
+            "group_id": 10001,
+            "user_id": 20002,
+        }
+    )
+
+    outcome = await message_router.handle_group_notice(event, repo, sender)
+
+    assert outcome.replied is True
+    assert sender.group_messages == [("10001", "欢迎 20002 来到 10001")]
+    audit_logs = await repo.recent_audit_logs()
+    assert audit_logs[0].action == "welcome_new_member"
 
 
 async def test_admin_qq_ids_can_run_admin_lite_commands(repo, message_router, sender):
