@@ -1203,8 +1203,25 @@ class Repository:
         )
         return list(result.scalars().all())
 
-    async def recent_audit_logs(self, limit: int = 50) -> list[AuditLog]:
-        result = await self.session.execute(select(AuditLog).order_by(AuditLog.id.desc()).limit(limit))
+    async def recent_audit_logs(
+        self,
+        limit: int = 50,
+        *,
+        group_id: str | None = None,
+        action: str | None = None,
+        target_type: str | None = None,
+        target_id: str | None = None,
+    ) -> list[AuditLog]:
+        query = select(AuditLog)
+        if group_id is not None:
+            query = query.where(AuditLog.group_id == group_id)
+        if action is not None:
+            query = query.where(AuditLog.action == action)
+        if target_type is not None:
+            query = query.where(AuditLog.target_type == target_type)
+        if target_id is not None:
+            query = query.where(AuditLog.target_id == target_id)
+        result = await self.session.execute(query.order_by(AuditLog.id.desc()).limit(limit))
         return list(result.scalars().all())
 
     async def overview(self) -> dict[str, Any]:

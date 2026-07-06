@@ -1061,9 +1061,23 @@ async def llm_usage(request: Request, session: AsyncSession = Depends(get_sessio
 
 
 @router.get("/audit-logs", dependencies=[Depends(require_admin)])
-async def audit_logs(request: Request, session: AsyncSession = Depends(get_session)):
+async def audit_logs(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    group_id: str | None = Query(default=None, pattern=r"^\d*$"),
+    action: str | None = Query(default=None, min_length=1, max_length=128),
+    target_type: str | None = Query(default=None, min_length=1, max_length=64),
+    target_id: str | None = Query(default=None, min_length=1, max_length=128),
+    limit: int = Query(default=50, ge=1, le=200),
+):
     repo = repo_from(request, session)
-    records = await repo.recent_audit_logs()
+    records = await repo.recent_audit_logs(
+        limit=limit,
+        group_id=group_id,
+        action=action,
+        target_type=target_type,
+        target_id=target_id,
+    )
     return [
         {
             "id": item.id,

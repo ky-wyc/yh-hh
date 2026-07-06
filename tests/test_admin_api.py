@@ -1107,3 +1107,40 @@ def test_audit_logs_are_queryable(tmp_path):
 
         assert response.status_code == 200
         assert response.json()[0]["action"] == "bot_settings_update"
+
+
+def test_audit_logs_can_be_filtered_for_moderation_history(tmp_path):
+    settings = Settings(
+        DATABASE_URL=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",
+        REDIS_URL="",
+        ADMIN_USERNAME="admin",
+        ADMIN_PASSWORD="secret",
+    )
+    app = create_app(settings)
+
+    with TestClient(app) as client:
+        token = client.post(
+            "/api/auth/login", json={"username": "admin", "password": "secret"}
+        ).json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        client.patch("/api/settings/bot", json={"default_reply_mode": "command_only"}, headers=headers)
+        client.patch("/api/groups/10001", json={"enabled": True}, headers=headers)
+
+        all_logs = client.get("/api/audit-logs?limit=2", headers=headers)
+        group_logs = client.get("/api/audit-logs?group_id=10001", headers=headers)
+        action_logs = client.get("/api/audit-logs?action=group_update", headers=headers)
+        target_logs = client.get(
+            "/api/audit-logs?target_type=group&target_id=10001",
+            headers=headers,
+        )
+
+        assert all_logs.status_code == 200
+        assert len(all_logs.json()) == 2
+        assert group_logs.status_code == 200
+        assert all(item["group_id"] == "10001" for item in group_logs.json())
+        assert action_logs.status_code == 200
+        assert all(item["action"] == "group_update" for item in action_logs.json())
+        assert target_logs.status_code == 200
+        assert target_logs.json()[0]["target_type"] == "group"
+        assert target_logs.json()[0]["target_id"] == "10001"
