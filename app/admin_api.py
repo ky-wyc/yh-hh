@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
@@ -27,6 +29,10 @@ from app.schemas import (
     MemoryCreate,
     MemoryOut,
     MemoryUpdate,
+    ScheduledTaskCreate,
+    ScheduledTaskOut,
+    ScheduledTaskUpdate,
+    TaskRunOut,
 )
 
 router = APIRouter(prefix="/api")
@@ -88,6 +94,63 @@ def knowledge_document_out(document) -> KnowledgeDocumentOut:
         created_at=document.created_at.isoformat(),
         updated_at=document.updated_at.isoformat(),
     )
+
+
+def naive_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is not None:
+        return value.astimezone(UTC).replace(tzinfo=None)
+    return value
+
+
+def scheduled_task_out(task) -> ScheduledTaskOut:
+    try:
+        payload = json.loads(task.payload_json or "{}")
+        if not isinstance(payload, dict):
+            payload = {}
+    except json.JSONDecodeError:
+        payload = {}
+    return ScheduledTaskOut(
+        id=task.id,
+        name=task.name,
+        task_type=task.task_type,
+        schedule_type=task.schedule_type,
+        group_id=task.group_id,
+        user_id=task.user_id,
+        payload=payload,
+        enabled=task.enabled,
+        next_run_at=task.next_run_at.isoformat() if task.next_run_at else None,
+        interval_seconds=task.interval_seconds,
+        last_run_at=task.last_run_at.isoformat() if task.last_run_at else None,
+        created_by=task.created_by,
+        created_at=task.created_at.isoformat(),
+        updated_at=task.updated_at.isoformat(),
+    )
+
+
+def task_run_out(run) -> TaskRunOut:
+    return TaskRunOut(
+        id=run.id,
+        task_id=run.task_id,
+        task_type=run.task_type,
+        group_id=run.group_id,
+        status=run.status,
+        result_message=run.result_message,
+        error_message=run.error_message,
+        started_at=run.started_at.isoformat(),
+        finished_at=run.finished_at.isoformat() if run.finished_at else None,
+    )
+
+
+def audit_safe_detail(value):
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {key: audit_safe_detail(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [audit_safe_detail(item) for item in value]
+    return value
 
 
 @router.post("/auth/login", response_model=LoginResponse)
@@ -266,6 +329,109 @@ async def delete_keyword_rule(
     )
     await session.commit()
     return {"deleted": True}
+
+
+@router.get("/scheduled-tasks", response_model=list[ScheduledTaskOut], dependencies=[Depends(require_admin)])
+async def list_scheduled_tasks(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    group_id: str | None = Query(default=None, pattern=r"^\d*$"),
+):
+    repo = repo_from(request, session)
+    tasks = await repo.list_scheduled_tasks(group_id=group_id)
+    return [scheduled_task_out(task) for task in tasks]
+
+
+@router.post("/scheduled-tasks", response_model=ScheduledTaskOut, dependencies=[Depends(require_admin)])
+async def create_scheduled_task(
+    payload: ScheduledTaskCreate,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    repo = repo_from(request, session)
+    task = await repo.create_scheduled_task(
+        name=payload.name,
+        task_type=payload.task_type,
+        schedule_type=payload.schedule_type,
+        group_id=payload.group_id,
+        user_id=payload.user_id,
+        payload=payload.payload,
+        enabled=payload.enabled,
+        next_run_at=naive_utc(payload.next_run_at),
+        interval_seconds=payload.interval_seconds,
+        created_by="admin",
+    )
+    await repo.audit(
+        action="scheduled_task_create",
+        group_id=task.group_id,
+        target_type="scheduled_task",
+        target_id=str(task.id),
+        detail={"task_type": task.task_type, "schedule_type": task.schedule_type},
+    )
+    await session.commit()
+    return scheduled_task_out(task)
+
+
+@router.patch(
+    "/scheduled-tasks/{task_id}",
+    response_model=ScheduledTaskOut,
+    dependencies=[Depends(require_admin)],
+)
+async def update_scheduled_task(
+    task_id: Annotated[int, Path(ge=1)],
+    payload: ScheduledTaskUpdate,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    repo = repo_from(request, session)
+    changes = payload.model_dump(exclude_unset=True)
+    if "next_run_at" in changes:
+        changes["next_run_at"] = naive_utc(changes["next_run_at"])
+    task = await repo.update_scheduled_task_by_id(task_id, changes)
+    if task is None:
+        raise HTTPException(status_code=404, detail="scheduled task not found")
+    await repo.audit(
+        action="scheduled_task_update",
+        group_id=task.group_id,
+        target_type="scheduled_task",
+        target_id=str(task.id),
+        detail={"changes": audit_safe_detail(changes)},
+    )
+    await session.commit()
+    return scheduled_task_out(task)
+
+
+@router.delete("/scheduled-tasks/{task_id}", dependencies=[Depends(require_admin)])
+async def delete_scheduled_task(
+    task_id: Annotated[int, Path(ge=1)],
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    repo = repo_from(request, session)
+    task = await repo.get_scheduled_task_by_id(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="scheduled task not found")
+    group_id = task.group_id
+    deleted = await repo.delete_scheduled_task_by_id(task_id)
+    await repo.audit(
+        action="scheduled_task_delete",
+        group_id=group_id,
+        target_type="scheduled_task",
+        target_id=str(task_id),
+    )
+    await session.commit()
+    return {"deleted": bool(deleted)}
+
+
+@router.get("/task-runs", response_model=list[TaskRunOut], dependencies=[Depends(require_admin)])
+async def list_task_runs(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    task_id: int | None = Query(default=None, ge=1),
+):
+    repo = repo_from(request, session)
+    runs = await repo.list_task_runs(task_id=task_id)
+    return [task_run_out(run) for run in runs]
 
 
 @router.get(

@@ -132,6 +132,39 @@ class KnowledgeChunk(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now_utc)
 
 
+class ScheduledTask(Base):
+    __tablename__ = "scheduled_tasks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), default="")
+    task_type: Mapped[str] = mapped_column(String(64), default="", index=True)
+    schedule_type: Mapped[str] = mapped_column(String(32), default="once")
+    group_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    user_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    payload_json: Mapped[str] = mapped_column(Text, default="{}")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    next_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    interval_seconds: Mapped[int] = mapped_column(Integer, default=0)
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_by: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now_utc, onupdate=now_utc)
+
+
+class TaskRun(Base):
+    __tablename__ = "task_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    task_id: Mapped[int] = mapped_column(Integer, index=True)
+    task_type: Mapped[str] = mapped_column(String(64), default="", index=True)
+    group_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    status: Mapped[str] = mapped_column(String(32), default="success", index=True)
+    result_message: Mapped[str] = mapped_column(Text, default="")
+    error_message: Mapped[str] = mapped_column(Text, default="")
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=now_utc)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class AuditLog(Base):
     __tablename__ = "audit_logs"
 

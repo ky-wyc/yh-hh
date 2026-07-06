@@ -482,6 +482,57 @@ def test_knowledge_doc_can_be_reindexed_from_admin(tmp_path):
         assert audit.json()[0]["action"] == "knowledge_doc_reindex"
 
 
+def test_scheduled_tasks_can_be_managed_from_admin(tmp_path):
+    settings = Settings(
+        DATABASE_URL=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",
+        REDIS_URL="",
+        ADMIN_USERNAME="admin",
+        ADMIN_PASSWORD="secret",
+    )
+    app = create_app(settings)
+
+    with TestClient(app) as client:
+        token = client.post(
+            "/api/auth/login", json={"username": "admin", "password": "secret"}
+        ).json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        created = client.post(
+            "/api/scheduled-tasks",
+            json={
+                "name": "测试提醒",
+                "task_type": "reminder_once",
+                "schedule_type": "once",
+                "group_id": "10001",
+                "payload": {"message": "记得测试"},
+                "next_run_at": "2026-07-06T12:00:00",
+                "enabled": True,
+            },
+            headers=headers,
+        )
+        assert created.status_code == 200
+        task = created.json()
+        assert task["name"] == "测试提醒"
+        assert task["task_type"] == "reminder_once"
+        assert task["enabled"] is True
+
+        patched = client.patch(
+            f"/api/scheduled-tasks/{task['id']}",
+            json={"enabled": False},
+            headers=headers,
+        )
+        assert patched.status_code == 200
+        assert patched.json()["enabled"] is False
+
+        listed = client.get("/api/scheduled-tasks", headers=headers)
+        assert listed.status_code == 200
+        assert listed.json()[0]["id"] == task["id"]
+
+        deleted = client.delete(f"/api/scheduled-tasks/{task['id']}", headers=headers)
+        assert deleted.status_code == 200
+        assert deleted.json()["deleted"] is True
+
+
 def test_group_update_rejects_invalid_reply_mode(tmp_path):
     settings = Settings(
         DATABASE_URL=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",

@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+from datetime import datetime
 from urllib.parse import urlparse
+from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
 
 REPLY_MODES = {"disabled", "command_only", "mention_only", "active"}
 MEMORY_STATUSES = {"pending", "approved", "rejected", "deleted"}
+SCHEDULE_TYPES = {"once", "daily", "interval"}
+TASK_TYPES = {"reminder_once", "daily_summary", "cleanup_context"}
 
 
 class LoginRequest(BaseModel):
@@ -337,6 +341,127 @@ class KnowledgeSearchRequest(BaseModel):
         if len(stripped) > 1000:
             raise ValueError("query must be 1000 characters or fewer")
         return stripped
+
+
+class ScheduledTaskOut(BaseModel):
+    id: int
+    name: str
+    task_type: str
+    schedule_type: str
+    group_id: str
+    user_id: str
+    payload: dict[str, Any]
+    enabled: bool
+    next_run_at: str | None
+    interval_seconds: int
+    last_run_at: str | None
+    created_by: str
+    created_at: str
+    updated_at: str
+
+
+class ScheduledTaskCreate(BaseModel):
+    name: str
+    task_type: str
+    schedule_type: str
+    group_id: str = ""
+    user_id: str = ""
+    payload: dict[str, Any] = Field(default_factory=dict)
+    enabled: bool = True
+    next_run_at: datetime | None = None
+    interval_seconds: int = Field(default=0, ge=0, le=60 * 60 * 24 * 30)
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("name must not be empty")
+        if len(stripped) > 255:
+            raise ValueError("name must be 255 characters or fewer")
+        return stripped
+
+    @field_validator("task_type")
+    @classmethod
+    def validate_task_type(cls, value: str) -> str:
+        if value not in TASK_TYPES:
+            raise ValueError(f"task_type must be one of: {', '.join(sorted(TASK_TYPES))}")
+        return value
+
+    @field_validator("schedule_type")
+    @classmethod
+    def validate_schedule_type(cls, value: str) -> str:
+        if value not in SCHEDULE_TYPES:
+            raise ValueError(f"schedule_type must be one of: {', '.join(sorted(SCHEDULE_TYPES))}")
+        return value
+
+    @field_validator("group_id", "user_id")
+    @classmethod
+    def validate_optional_id(cls, value: str) -> str:
+        stripped = value.strip()
+        if stripped and not stripped.isdigit():
+            raise ValueError("value must be numeric or empty")
+        return stripped
+
+
+class ScheduledTaskUpdate(BaseModel):
+    name: str | None = None
+    task_type: str | None = None
+    schedule_type: str | None = None
+    group_id: str | None = None
+    user_id: str | None = None
+    payload: dict[str, Any] | None = None
+    enabled: bool | None = None
+    next_run_at: datetime | None = None
+    interval_seconds: int | None = Field(default=None, ge=0, le=60 * 60 * 24 * 30)
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("name must not be empty")
+        if len(stripped) > 255:
+            raise ValueError("name must be 255 characters or fewer")
+        return stripped
+
+    @field_validator("task_type")
+    @classmethod
+    def validate_task_type(cls, value: str | None) -> str | None:
+        if value is not None and value not in TASK_TYPES:
+            raise ValueError(f"task_type must be one of: {', '.join(sorted(TASK_TYPES))}")
+        return value
+
+    @field_validator("schedule_type")
+    @classmethod
+    def validate_schedule_type(cls, value: str | None) -> str | None:
+        if value is not None and value not in SCHEDULE_TYPES:
+            raise ValueError(f"schedule_type must be one of: {', '.join(sorted(SCHEDULE_TYPES))}")
+        return value
+
+    @field_validator("group_id", "user_id")
+    @classmethod
+    def validate_optional_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        stripped = value.strip()
+        if stripped and not stripped.isdigit():
+            raise ValueError("value must be numeric or empty")
+        return stripped
+
+
+class TaskRunOut(BaseModel):
+    id: int
+    task_id: int
+    task_type: str
+    group_id: str
+    status: str
+    result_message: str
+    error_message: str
+    started_at: str
+    finished_at: str | None
 
 
 class BotSettingsOut(BaseModel):

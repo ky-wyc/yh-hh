@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import delete, func, or_, select
@@ -19,8 +20,11 @@ from app.models import (
     LLMUsageLog,
     MemoryRecord,
     MessageLog,
+    ScheduledTask,
     Setting,
+    TaskRun,
     User,
+    now_utc,
 )
 
 
@@ -588,6 +592,133 @@ class Repository:
             )
         ranked.sort(key=lambda item: item.score, reverse=True)
         return ranked[:limit]
+
+    async def create_scheduled_task(
+        self,
+        *,
+        name: str,
+        task_type: str,
+        schedule_type: str,
+        group_id: str = "",
+        user_id: str = "",
+        payload: dict[str, Any] | None = None,
+        enabled: bool = True,
+        next_run_at: datetime | None = None,
+        interval_seconds: int = 0,
+        created_by: str = "",
+    ) -> ScheduledTask:
+        task = ScheduledTask(
+            name=name,
+            task_type=task_type,
+            schedule_type=schedule_type,
+            group_id=group_id,
+            user_id=user_id,
+            payload_json=json.dumps(payload or {}, ensure_ascii=False),
+            enabled=enabled,
+            next_run_at=next_run_at,
+            interval_seconds=interval_seconds,
+            created_by=created_by,
+        )
+        self.session.add(task)
+        await self.session.flush()
+        return task
+
+    async def get_scheduled_task_by_id(self, task_id: int) -> ScheduledTask | None:
+        result = await self.session.execute(select(ScheduledTask).where(ScheduledTask.id == task_id))
+        return result.scalar_one_or_none()
+
+    async def list_scheduled_tasks(self, group_id: str | None = None) -> list[ScheduledTask]:
+        query = select(ScheduledTask)
+        if group_id is not None:
+            query = query.where(ScheduledTask.group_id == group_id)
+        result = await self.session.execute(query.order_by(ScheduledTask.id.desc()))
+        return list(result.scalars().all())
+
+    async def update_scheduled_task_by_id(
+        self,
+        task_id: int,
+        changes: dict[str, Any],
+    ) -> ScheduledTask | None:
+        task = await self.get_scheduled_task_by_id(task_id)
+        if task is None:
+            return None
+        if "payload" in changes and changes["payload"] is not None:
+            task.payload_json = json.dumps(changes.pop("payload"), ensure_ascii=False)
+        for key in (
+            "name",
+            "task_type",
+            "schedule_type",
+            "group_id",
+            "user_id",
+            "enabled",
+            "next_run_at",
+            "interval_seconds",
+            "created_by",
+        ):
+            if key in changes and changes[key] is not None:
+                setattr(task, key, changes[key])
+        await self.session.flush()
+        return task
+
+    async def delete_scheduled_task_by_id(self, task_id: int) -> int:
+        result = await self.session.execute(delete(ScheduledTask).where(ScheduledTask.id == task_id))
+        await self.session.flush()
+        return result.rowcount or 0
+
+    async def due_scheduled_tasks(self, now: datetime, limit: int = 20) -> list[ScheduledTask]:
+        result = await self.session.execute(
+            select(ScheduledTask)
+            .where(
+                ScheduledTask.enabled.is_(True),
+                ScheduledTask.next_run_at.is_not(None),
+                ScheduledTask.next_run_at <= now,
+            )
+            .order_by(ScheduledTask.next_run_at, ScheduledTask.id)
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
+    async def create_task_run(
+        self,
+        *,
+        task_id: int,
+        task_type: str,
+        group_id: str = "",
+        status: str,
+        result_message: str = "",
+        error_message: str = "",
+        started_at: datetime | None = None,
+        finished_at: datetime | None = None,
+    ) -> TaskRun:
+        run = TaskRun(
+            task_id=task_id,
+            task_type=task_type,
+            group_id=group_id,
+            status=status,
+            result_message=result_message,
+            error_message=error_message[:1000],
+            started_at=started_at or now_utc(),
+            finished_at=finished_at,
+        )
+        self.session.add(run)
+        await self.session.flush()
+        return run
+
+    async def list_task_runs(self, task_id: int | None = None, limit: int = 100) -> list[TaskRun]:
+        query = select(TaskRun)
+        if task_id is not None:
+            query = query.where(TaskRun.task_id == task_id)
+        result = await self.session.execute(query.order_by(TaskRun.id.desc()).limit(limit))
+        return list(result.scalars().all())
+
+    async def recent_group_messages(self, group_id: str, since: datetime, limit: int = 50) -> list[MessageLog]:
+        result = await self.session.execute(
+            select(MessageLog)
+            .where(MessageLog.group_id == group_id, MessageLog.created_at >= since)
+            .order_by(MessageLog.id.desc())
+            .limit(limit)
+        )
+        return list(reversed(result.scalars().all()))
 
     async def audit(
         self,

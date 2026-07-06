@@ -7,6 +7,7 @@ import KeywordRulesView from './views/KeywordRulesView.vue'
 import LlmSettingsView from './views/LlmSettingsView.vue'
 import LogsView from './views/LogsView.vue'
 import MemoriesView from './views/MemoriesView.vue'
+import ScheduledTasksView from './views/ScheduledTasksView.vue'
 import { hasToken } from './auth'
 
 export const router = createRouter({
@@ -18,6 +19,7 @@ export const router = createRouter({
     { path: '/keywords', component: KeywordRulesView, meta: { requiresAuth: true } },
     { path: '/knowledge', component: KnowledgeView, meta: { requiresAuth: true } },
     { path: '/memories', component: MemoriesView, meta: { requiresAuth: true } },
+    { path: '/tasks', component: ScheduledTasksView, meta: { requiresAuth: true } },
     { path: '/llm', component: LlmSettingsView, meta: { requiresAuth: true } },
     { path: '/logs', component: LogsView, meta: { requiresAuth: true } }
   ]

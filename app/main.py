@@ -17,6 +17,7 @@ from app.llm import LLMService
 from app.onebot import OneBotConnectionManager, websocket_event_stream
 from app.repository import Repository
 from app.router import MessageRouter
+from app.scheduler import TaskScheduler
 
 logger = logging.getLogger(__name__)
 
@@ -34,9 +35,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await init_db(app.state.engine)
         app.state.rate_limiter = await create_rate_limiter(settings.redis_url)
         app.state.message_router = MessageRouter(settings, app.state.llm, app.state.rate_limiter)
+        app.state.task_scheduler = TaskScheduler(
+            session_factory=app.state.session_factory,
+            settings=settings,
+            sender=app.state.onebot,
+            cache=app.state.rate_limiter,
+        )
+        app.state.task_scheduler.start()
         try:
             yield
         finally:
+            await app.state.task_scheduler.stop()
             await app.state.rate_limiter.close()
             await app.state.engine.dispose()
 

@@ -77,11 +77,26 @@ async def knowledge_embedding_json(conn: AsyncConnection) -> None:
     )
 
 
+async def scheduled_task_tables(conn: AsyncConnection) -> None:
+    from app.models import ScheduledTask, TaskRun
+
+    def create_tables(sync_conn) -> None:
+        ScheduledTask.__table__.create(sync_conn, checkfirst=True)
+        TaskRun.__table__.create(sync_conn, checkfirst=True)
+
+    await conn.run_sync(create_tables)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration("20260706_001_baseline_schema", "Record baseline schema after MVP create_all", baseline_schema),
     Migration(
         "20260706_002_knowledge_embedding_json",
         "Ensure knowledge chunks can store future vector metadata",
         knowledge_embedding_json,
+    ),
+    Migration(
+        "20260706_003_scheduled_tasks",
+        "Record scheduled task and task run tables",
+        scheduled_task_tables,
     ),
 )

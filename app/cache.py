@@ -22,6 +22,9 @@ class BotCache(Protocol):
     async def get_context(self, group_id: str, limit: int = 10) -> list[str]:
         ...
 
+    async def clear_contexts(self) -> None:
+        ...
+
     async def health(self) -> dict[str, str]:
         ...
 
@@ -53,6 +56,9 @@ class MemoryRateLimiter:
         context = self.contexts[group_id]
         return list(context)[-limit:]
 
+    async def clear_contexts(self) -> None:
+        self.contexts.clear()
+
     async def health(self) -> dict[str, str]:
         return {"backend": "memory", "status": "ok"}
 
@@ -81,6 +87,10 @@ class RedisRateLimiter:
         key = f"context:{group_id}"
         values = await self.redis.lrange(key, -limit, -1)
         return [str(value) for value in values]
+
+    async def clear_contexts(self) -> None:
+        async for key in self.redis.scan_iter(match="context:*"):
+            await self.redis.delete(key)
 
     async def health(self) -> dict[str, str]:
         await self.redis.ping()
