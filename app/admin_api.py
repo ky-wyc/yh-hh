@@ -25,6 +25,9 @@ from app.schemas import (
     KnowledgeDocumentCreate,
     KnowledgeDocumentOut,
     KnowledgeDocumentUpdate,
+    KnowledgeReindexItemOut,
+    KnowledgeReindexOut,
+    KnowledgeReindexRequest,
     KnowledgeSearchRequest,
     LLMSettingsOut,
     LLMSettingsUpdate,
@@ -568,9 +571,10 @@ async def list_knowledge_docs(
     request: Request,
     session: AsyncSession = Depends(get_session),
     group_id: str | None = Query(default=None, pattern=r"^\d*$"),
+    index_status: str | None = Query(default=None, pattern=r"^(completed|vectorized|failed)$"),
 ):
     repo = repo_from(request, session)
-    documents = await repo.list_knowledge_documents(group_id=group_id)
+    documents = await repo.list_knowledge_documents(group_id=group_id, index_status=index_status)
     return [knowledge_document_out(document) for document in documents]
 
 
@@ -601,6 +605,68 @@ async def create_knowledge_doc(
     )
     await session.commit()
     return knowledge_document_out(document)
+
+
+@router.post(
+    "/knowledge-docs/reindex",
+    response_model=KnowledgeReindexOut,
+    dependencies=[Depends(require_admin)],
+)
+async def reindex_knowledge_docs(
+    payload: KnowledgeReindexRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    repo = repo_from(request, session)
+    documents = await repo.list_knowledge_documents(
+        group_id=payload.group_id or None,
+        index_status="failed" if payload.only_failed else None,
+    )
+    selected = [
+        document
+        for document in documents
+        if payload.include_disabled or document.enabled
+    ][: payload.limit]
+    results: list[KnowledgeReindexItemOut] = []
+    for document in selected:
+        await repo.rebuild_knowledge_chunks(document)
+        results.append(
+            KnowledgeReindexItemOut(
+                id=document.id,
+                title=document.title,
+                group_id=document.group_id,
+                index_status=document.index_status,
+                index_error=document.index_error,
+                chunk_count=document.chunk_count,
+            )
+        )
+    succeeded = sum(1 for item in results if item.index_status in {"completed", "vectorized"})
+    failed = sum(1 for item in results if item.index_status == "failed")
+    skipped = max(0, len(documents) - len(selected))
+    await repo.audit(
+        action="knowledge_docs_reindex",
+        group_id=payload.group_id,
+        target_type="knowledge_doc",
+        target_id="bulk",
+        detail={
+            "source": "admin",
+            "only_failed": payload.only_failed,
+            "include_disabled": payload.include_disabled,
+            "requested": len(documents),
+            "processed": len(selected),
+            "succeeded": succeeded,
+            "failed": failed,
+            "skipped": skipped,
+        },
+    )
+    await session.commit()
+    return KnowledgeReindexOut(
+        total=len(selected),
+        succeeded=succeeded,
+        failed=failed,
+        skipped=skipped,
+        results=results,
+    )
 
 
 @router.patch(

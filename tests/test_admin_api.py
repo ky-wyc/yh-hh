@@ -598,6 +598,79 @@ def test_knowledge_doc_can_be_reindexed_from_admin(tmp_path):
         assert audit.json()[0]["action"] == "knowledge_doc_reindex"
 
 
+def test_knowledge_docs_can_be_bulk_reindexed_and_retry_failed_from_admin(tmp_path):
+    settings = Settings(
+        DATABASE_URL=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",
+        REDIS_URL="",
+        ADMIN_USERNAME="admin",
+        ADMIN_PASSWORD="secret",
+    )
+    app = create_app(settings)
+
+    with TestClient(app) as client:
+        token = client.post(
+            "/api/auth/login", json={"username": "admin", "password": "secret"}
+        ).json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        first = client.post(
+            "/api/knowledge-docs",
+            json={
+                "group_id": "10001",
+                "title": "FAQ 1",
+                "content": "第一篇知识。",
+                "enabled": True,
+            },
+            headers=headers,
+        ).json()
+        second = client.post(
+            "/api/knowledge-docs",
+            json={
+                "group_id": "10001",
+                "title": "FAQ 2",
+                "content": "第二篇知识。",
+                "enabled": True,
+            },
+            headers=headers,
+        ).json()
+        client.patch(
+            f"/api/knowledge-docs/{second['id']}",
+            json={"content": "第二篇知识更新。"},
+            headers=headers,
+        )
+
+        bulk = client.post(
+            "/api/knowledge-docs/reindex",
+            json={"group_id": "10001", "only_failed": False, "limit": 10},
+            headers=headers,
+        )
+
+        assert bulk.status_code == 200
+        payload = bulk.json()
+        assert payload["total"] == 2
+        assert payload["succeeded"] == 2
+        assert payload["failed"] == 0
+        assert {item["id"] for item in payload["results"]} == {first["id"], second["id"]}
+
+        failed_list = client.get(
+            "/api/knowledge-docs?group_id=10001&index_status=failed",
+            headers=headers,
+        )
+        assert failed_list.status_code == 200
+        assert failed_list.json() == []
+
+        retry_failed = client.post(
+            "/api/knowledge-docs/reindex",
+            json={"group_id": "10001", "only_failed": True, "limit": 10},
+            headers=headers,
+        )
+        assert retry_failed.status_code == 200
+        assert retry_failed.json()["total"] == 0
+
+        audit = client.get("/api/audit-logs", headers=headers)
+        assert audit.json()[0]["action"] == "knowledge_docs_reindex"
+
+
 def test_scheduled_tasks_can_be_managed_from_admin(tmp_path):
     settings = Settings(
         DATABASE_URL=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",

@@ -6,11 +6,31 @@
       <el-form-item label="筛选群号">
         <el-input v-model="filters.group_id" clearable placeholder="留空查看全部" />
       </el-form-item>
+      <el-form-item label="索引状态">
+        <el-select v-model="filters.index_status" clearable placeholder="全部">
+          <el-option label="正常" value="vectorized" />
+          <el-option label="失败" value="failed" />
+        </el-select>
+      </el-form-item>
       <el-form-item>
         <el-button :loading="loading" @click="load">查询</el-button>
         <el-button @click="resetFilter">重置</el-button>
+        <el-button type="primary" plain :loading="bulkReindexing" @click="bulkReindex(false)">
+          重建当前筛选
+        </el-button>
+        <el-button type="warning" plain :loading="retryingFailed" @click="bulkReindex(true)">
+          重试失败
+        </el-button>
       </el-form-item>
     </el-form>
+    <el-alert
+      v-if="bulkResult"
+      class="bulk-result"
+      type="info"
+      :closable="false"
+      show-icon
+      :title="`批量处理：${bulkResult.total} 篇，成功 ${bulkResult.succeeded}，失败 ${bulkResult.failed}，跳过 ${bulkResult.skipped}`"
+    />
   </el-card>
 
   <el-card class="toolbar-card">
@@ -126,10 +146,19 @@ const searchResults = ref<SearchResult[]>([])
 const loading = ref(false)
 const saving = ref(false)
 const searching = ref(false)
+const bulkReindexing = ref(false)
+const retryingFailed = ref(false)
 const editingId = ref<number | null>(null)
+const bulkResult = ref<{
+  total: number
+  succeeded: number
+  failed: number
+  skipped: number
+} | null>(null)
 
 const filters = reactive({
-  group_id: ''
+  group_id: '',
+  index_status: ''
 })
 
 const searchForm = reactive({
@@ -176,7 +205,9 @@ async function load() {
 
   loading.value = true
   try {
-    const params = filters.group_id.trim() ? { group_id: filters.group_id.trim() } : {}
+    const params: Record<string, string> = {}
+    if (filters.group_id.trim()) params.group_id = filters.group_id.trim()
+    if (filters.index_status) params.index_status = filters.index_status
     const { data } = await api.get('/knowledge-docs', { params })
     documents.value = data
   } catch (error: any) {
@@ -188,6 +219,7 @@ async function load() {
 
 function resetFilter() {
   filters.group_id = ''
+  filters.index_status = ''
   load()
 }
 
@@ -252,6 +284,47 @@ async function reindexDocument(document: KnowledgeDocument) {
     await load()
   } catch (error: any) {
     ElMessage.error(errorText(error, '重建索引失败'))
+  }
+}
+
+async function bulkReindex(onlyFailed: boolean) {
+  if (!validateOptionalGroup(filters.group_id, '筛选群号')) return
+  const title = onlyFailed ? '重试失败索引' : '批量重建索引'
+  const message = onlyFailed
+    ? '将重试当前群号筛选下所有失败文档，是否继续？'
+    : '将重建当前群号筛选下所有已启用文档索引，是否继续？'
+  try {
+    await ElMessageBox.confirm(message, title, {
+      type: 'warning',
+      confirmButtonText: '继续',
+      cancelButtonText: '取消'
+    })
+  } catch {
+    return
+  }
+
+  bulkResult.value = null
+  if (onlyFailed) retryingFailed.value = true
+  else bulkReindexing.value = true
+  try {
+    const { data } = await api.post('/knowledge-docs/reindex', {
+      group_id: filters.group_id.trim(),
+      only_failed: onlyFailed,
+      include_disabled: false,
+      limit: 100
+    })
+    bulkResult.value = data
+    if (data.failed > 0) {
+      ElMessage.warning(`处理完成，但有 ${data.failed} 篇失败`)
+    } else {
+      ElMessage.success('批量索引处理完成')
+    }
+    await load()
+  } catch (error: any) {
+    ElMessage.error(errorText(error, '批量索引处理失败'))
+  } finally {
+    retryingFailed.value = false
+    bulkReindexing.value = false
   }
 }
 
@@ -333,6 +406,10 @@ onMounted(load)
 }
 
 .search-table {
+  margin-top: 12px;
+}
+
+.bulk-result {
   margin-top: 12px;
 }
 </style>

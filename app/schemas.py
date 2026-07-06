@@ -400,6 +400,38 @@ class KnowledgeSearchRequest(BaseModel):
         return stripped
 
 
+class KnowledgeReindexRequest(BaseModel):
+    group_id: str = ""
+    only_failed: bool = False
+    include_disabled: bool = False
+    limit: int = Field(default=100, ge=1, le=500)
+
+    @field_validator("group_id")
+    @classmethod
+    def validate_group_id(cls, value: str) -> str:
+        stripped = value.strip()
+        if stripped and not stripped.isdigit():
+            raise ValueError("group_id must be numeric or empty")
+        return stripped
+
+
+class KnowledgeReindexItemOut(BaseModel):
+    id: int
+    title: str
+    group_id: str
+    index_status: str
+    index_error: str
+    chunk_count: int
+
+
+class KnowledgeReindexOut(BaseModel):
+    total: int
+    succeeded: int
+    failed: int
+    skipped: int
+    results: list[KnowledgeReindexItemOut]
+
+
 class ScheduledTaskOut(BaseModel):
     id: int
     name: str

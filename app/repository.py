@@ -762,10 +762,16 @@ class Repository:
         )
         return result.scalar_one_or_none()
 
-    async def list_knowledge_documents(self, group_id: str | None = None) -> list[KnowledgeDocument]:
+    async def list_knowledge_documents(
+        self,
+        group_id: str | None = None,
+        index_status: str | None = None,
+    ) -> list[KnowledgeDocument]:
         query = select(KnowledgeDocument)
         if group_id is not None:
             query = query.where(KnowledgeDocument.group_id == group_id)
+        if index_status is not None:
+            query = query.where(KnowledgeDocument.index_status == index_status)
         result = await self.session.execute(query.order_by(KnowledgeDocument.id.desc()))
         return list(result.scalars().all())
 
