@@ -31,6 +31,92 @@ class GroupUpdate(BaseModel):
         return value
 
 
+class KeywordRuleOut(BaseModel):
+    id: int
+    group_id: str
+    keyword: str
+    response: str
+    enabled: bool
+    created_by: str
+    created_at: str
+
+
+class KeywordRuleCreate(BaseModel):
+    group_id: str = ""
+    keyword: str
+    response: str = "命中关键词，已记录。"
+    enabled: bool = True
+
+    @field_validator("group_id")
+    @classmethod
+    def validate_group_id(cls, value: str) -> str:
+        stripped = value.strip()
+        if stripped and not stripped.isdigit():
+            raise ValueError("group_id must be numeric or empty for global rules")
+        return stripped
+
+    @field_validator("keyword")
+    @classmethod
+    def validate_keyword(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("keyword must not be empty")
+        if len(stripped) > 255:
+            raise ValueError("keyword must be 255 characters or fewer")
+        return stripped
+
+    @field_validator("response")
+    @classmethod
+    def validate_response(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("response must not be empty")
+        if len(stripped) > 2000:
+            raise ValueError("response must be 2000 characters or fewer")
+        return stripped
+
+
+class KeywordRuleUpdate(BaseModel):
+    group_id: str | None = None
+    keyword: str | None = None
+    response: str | None = None
+    enabled: bool | None = None
+
+    @field_validator("group_id")
+    @classmethod
+    def validate_group_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        stripped = value.strip()
+        if stripped and not stripped.isdigit():
+            raise ValueError("group_id must be numeric or empty for global rules")
+        return stripped
+
+    @field_validator("keyword")
+    @classmethod
+    def validate_keyword(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("keyword must not be empty")
+        if len(stripped) > 255:
+            raise ValueError("keyword must be 255 characters or fewer")
+        return stripped
+
+    @field_validator("response")
+    @classmethod
+    def validate_response(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("response must not be empty")
+        if len(stripped) > 2000:
+            raise ValueError("response must be 2000 characters or fewer")
+        return stripped
+
+
 class BotSettingsOut(BaseModel):
     default_group_enabled: bool
     default_reply_mode: str

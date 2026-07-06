@@ -269,6 +269,78 @@ class Repository:
         await self.session.flush()
         return rule
 
+    async def create_or_update_keyword_rule(
+        self,
+        *,
+        group_id: str,
+        keyword: str,
+        response: str,
+        enabled: bool,
+        created_by: str,
+    ) -> tuple[KeywordRule, bool]:
+        result = await self.session.execute(
+            select(KeywordRule).where(KeywordRule.group_id == group_id, KeywordRule.keyword == keyword)
+        )
+        existing = result.scalar_one_or_none()
+        if existing is not None:
+            existing.response = response
+            existing.enabled = enabled
+            if created_by:
+                existing.created_by = created_by
+            await self.session.flush()
+            return existing, False
+
+        rule = KeywordRule(
+            group_id=group_id,
+            keyword=keyword,
+            response=response,
+            enabled=enabled,
+            created_by=created_by,
+        )
+        self.session.add(rule)
+        await self.session.flush()
+        return rule, True
+
+    async def get_keyword_rule_by_id(self, rule_id: int) -> KeywordRule | None:
+        result = await self.session.execute(select(KeywordRule).where(KeywordRule.id == rule_id))
+        return result.scalar_one_or_none()
+
+    async def list_keyword_rules_for_admin(self, group_id: str | None = None) -> list[KeywordRule]:
+        query = select(KeywordRule)
+        if group_id is not None:
+            query = query.where(KeywordRule.group_id == group_id)
+        result = await self.session.execute(query.order_by(KeywordRule.group_id, KeywordRule.keyword))
+        return list(result.scalars().all())
+
+    async def update_keyword_rule_by_id(self, rule_id: int, changes: dict[str, Any]) -> KeywordRule | None:
+        rule = await self.get_keyword_rule_by_id(rule_id)
+        if rule is None:
+            return None
+
+        next_group_id = changes.get("group_id", rule.group_id)
+        next_keyword = changes.get("keyword", rule.keyword)
+        if next_group_id != rule.group_id or next_keyword != rule.keyword:
+            result = await self.session.execute(
+                select(KeywordRule).where(
+                    KeywordRule.group_id == next_group_id,
+                    KeywordRule.keyword == next_keyword,
+                    KeywordRule.id != rule_id,
+                )
+            )
+            if result.scalar_one_or_none() is not None:
+                raise ValueError("keyword rule already exists for this group")
+
+        for key in ("group_id", "keyword", "response", "enabled"):
+            if key in changes and changes[key] is not None:
+                setattr(rule, key, changes[key])
+        await self.session.flush()
+        return rule
+
+    async def delete_keyword_rule_by_id(self, rule_id: int) -> int:
+        result = await self.session.execute(delete(KeywordRule).where(KeywordRule.id == rule_id))
+        await self.session.flush()
+        return result.rowcount or 0
+
     async def delete_keyword_rule(self, *, group_id: str, keyword: str) -> int:
         result = await self.session.execute(
             delete(KeywordRule).where(KeywordRule.group_id == group_id, KeywordRule.keyword == keyword)

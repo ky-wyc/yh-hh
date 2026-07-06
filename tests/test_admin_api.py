@@ -264,6 +264,90 @@ def test_bot_settings_reject_invalid_values(tmp_path):
         assert invalid_rate_limit.status_code == 422
 
 
+def test_keyword_rules_can_be_managed_from_admin(tmp_path):
+    settings = Settings(
+        DATABASE_URL=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",
+        REDIS_URL="",
+        ADMIN_USERNAME="admin",
+        ADMIN_PASSWORD="secret",
+    )
+    app = create_app(settings)
+
+    with TestClient(app) as client:
+        token = client.post(
+            "/api/auth/login", json={"username": "admin", "password": "secret"}
+        ).json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        created = client.post(
+            "/api/keyword-rules",
+            json={
+                "group_id": "10001",
+                "keyword": "spam",
+                "response": "请不要发广告",
+                "enabled": True,
+            },
+            headers=headers,
+        )
+        assert created.status_code == 200
+        rule = created.json()
+        assert rule["group_id"] == "10001"
+        assert rule["keyword"] == "spam"
+        assert rule["response"] == "请不要发广告"
+        assert rule["enabled"] is True
+
+        patched = client.patch(
+            f"/api/keyword-rules/{rule['id']}",
+            json={"response": "广告已拦截", "enabled": False},
+            headers=headers,
+        )
+        assert patched.status_code == 200
+        assert patched.json()["response"] == "广告已拦截"
+        assert patched.json()["enabled"] is False
+
+        listed = client.get("/api/keyword-rules?group_id=10001", headers=headers)
+        assert listed.status_code == 200
+        assert listed.json()[0]["keyword"] == "spam"
+
+        deleted = client.delete(f"/api/keyword-rules/{rule['id']}", headers=headers)
+        assert deleted.status_code == 200
+        assert deleted.json()["deleted"] is True
+
+        assert client.get("/api/keyword-rules", headers=headers).json() == []
+        audit = client.get("/api/audit-logs", headers=headers)
+        assert audit.json()[0]["action"] == "keyword_rule_delete"
+
+
+def test_keyword_rules_reject_invalid_payloads(tmp_path):
+    settings = Settings(
+        DATABASE_URL=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",
+        REDIS_URL="",
+        ADMIN_USERNAME="admin",
+        ADMIN_PASSWORD="secret",
+    )
+    app = create_app(settings)
+
+    with TestClient(app) as client:
+        token = client.post(
+            "/api/auth/login", json={"username": "admin", "password": "secret"}
+        ).json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        invalid_group = client.post(
+            "/api/keyword-rules",
+            json={"group_id": "abc", "keyword": "spam", "response": "blocked"},
+            headers=headers,
+        )
+        empty_keyword = client.post(
+            "/api/keyword-rules",
+            json={"group_id": "", "keyword": "  ", "response": "blocked"},
+            headers=headers,
+        )
+
+        assert invalid_group.status_code == 422
+        assert empty_keyword.status_code == 422
+
+
 def test_group_update_rejects_invalid_reply_mode(tmp_path):
     settings = Settings(
         DATABASE_URL=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",

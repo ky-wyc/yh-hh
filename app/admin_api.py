@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Path, Request
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,6 +12,9 @@ from app.schemas import (
     BotSettingsOut,
     BotSettingsUpdate,
     GroupUpdate,
+    KeywordRuleCreate,
+    KeywordRuleOut,
+    KeywordRuleUpdate,
     LLMSettingsOut,
     LLMSettingsUpdate,
     LLMTestRequest,
@@ -35,6 +38,18 @@ async def get_session(request: Request) -> AsyncSession:
 
 def repo_from(request: Request, session: AsyncSession) -> Repository:
     return Repository(session, request.app.state.settings)
+
+
+def keyword_rule_out(rule) -> KeywordRuleOut:
+    return KeywordRuleOut(
+        id=rule.id,
+        group_id=rule.group_id,
+        keyword=rule.keyword,
+        response=rule.response,
+        enabled=rule.enabled,
+        created_by=rule.created_by,
+        created_at=rule.created_at.isoformat(),
+    )
 
 
 @router.post("/auth/login", response_model=LoginResponse)
@@ -124,6 +139,95 @@ async def patch_group(
         "enabled": group.enabled,
         "reply_mode": group.reply_mode,
     }
+
+
+@router.get("/keyword-rules", response_model=list[KeywordRuleOut], dependencies=[Depends(require_admin)])
+async def list_keyword_rules(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    group_id: str | None = Query(default=None, pattern=r"^\d*$"),
+):
+    repo = repo_from(request, session)
+    rules = await repo.list_keyword_rules_for_admin(group_id=group_id)
+    return [keyword_rule_out(rule) for rule in rules]
+
+
+@router.post("/keyword-rules", response_model=KeywordRuleOut, dependencies=[Depends(require_admin)])
+async def create_keyword_rule(
+    payload: KeywordRuleCreate,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    repo = repo_from(request, session)
+    rule, created = await repo.create_or_update_keyword_rule(
+        group_id=payload.group_id,
+        keyword=payload.keyword,
+        response=payload.response,
+        enabled=payload.enabled,
+        created_by="admin",
+    )
+    await repo.audit(
+        action="keyword_rule_create" if created else "keyword_rule_update",
+        group_id=rule.group_id,
+        target_type="keyword",
+        target_id=rule.keyword,
+        detail={"source": "admin", "enabled": rule.enabled},
+    )
+    await session.commit()
+    return keyword_rule_out(rule)
+
+
+@router.patch(
+    "/keyword-rules/{rule_id}",
+    response_model=KeywordRuleOut,
+    dependencies=[Depends(require_admin)],
+)
+async def update_keyword_rule(
+    rule_id: Annotated[int, Path(ge=1)],
+    payload: KeywordRuleUpdate,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    repo = repo_from(request, session)
+    try:
+        rule = await repo.update_keyword_rule_by_id(rule_id, payload.model_dump(exclude_unset=True))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if rule is None:
+        raise HTTPException(status_code=404, detail="keyword rule not found")
+    await repo.audit(
+        action="keyword_rule_update",
+        group_id=rule.group_id,
+        target_type="keyword",
+        target_id=rule.keyword,
+        detail={"source": "admin", "changes": payload.model_dump(exclude_unset=True)},
+    )
+    await session.commit()
+    return keyword_rule_out(rule)
+
+
+@router.delete("/keyword-rules/{rule_id}", dependencies=[Depends(require_admin)])
+async def delete_keyword_rule(
+    rule_id: Annotated[int, Path(ge=1)],
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    repo = repo_from(request, session)
+    rule = await repo.get_keyword_rule_by_id(rule_id)
+    if rule is None:
+        raise HTTPException(status_code=404, detail="keyword rule not found")
+    group_id = rule.group_id
+    keyword = rule.keyword
+    await repo.delete_keyword_rule_by_id(rule_id)
+    await repo.audit(
+        action="keyword_rule_delete",
+        group_id=group_id,
+        target_type="keyword",
+        target_id=keyword,
+        detail={"source": "admin"},
+    )
+    await session.commit()
+    return {"deleted": True}
 
 
 @router.get("/settings/bot", response_model=BotSettingsOut, dependencies=[Depends(require_admin)])
