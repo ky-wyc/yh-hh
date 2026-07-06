@@ -15,6 +15,10 @@ from app.schemas import (
     KeywordRuleCreate,
     KeywordRuleOut,
     KeywordRuleUpdate,
+    KnowledgeDocumentCreate,
+    KnowledgeDocumentOut,
+    KnowledgeDocumentUpdate,
+    KnowledgeSearchRequest,
     LLMSettingsOut,
     LLMSettingsUpdate,
     LLMTestRequest,
@@ -67,6 +71,22 @@ def memory_out(memory) -> MemoryOut:
         created_by=memory.created_by,
         created_at=memory.created_at.isoformat(),
         updated_at=memory.updated_at.isoformat(),
+    )
+
+
+def knowledge_document_out(document) -> KnowledgeDocumentOut:
+    return KnowledgeDocumentOut(
+        id=document.id,
+        group_id=document.group_id,
+        title=document.title,
+        content=document.content,
+        enabled=document.enabled,
+        index_status=document.index_status,
+        index_error=document.index_error,
+        chunk_count=document.chunk_count,
+        created_by=document.created_by,
+        created_at=document.created_at.isoformat(),
+        updated_at=document.updated_at.isoformat(),
     )
 
 
@@ -246,6 +266,129 @@ async def delete_keyword_rule(
     )
     await session.commit()
     return {"deleted": True}
+
+
+@router.get(
+    "/knowledge-docs",
+    response_model=list[KnowledgeDocumentOut],
+    dependencies=[Depends(require_admin)],
+)
+async def list_knowledge_docs(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    group_id: str | None = Query(default=None, pattern=r"^\d*$"),
+):
+    repo = repo_from(request, session)
+    documents = await repo.list_knowledge_documents(group_id=group_id)
+    return [knowledge_document_out(document) for document in documents]
+
+
+@router.post(
+    "/knowledge-docs",
+    response_model=KnowledgeDocumentOut,
+    dependencies=[Depends(require_admin)],
+)
+async def create_knowledge_doc(
+    payload: KnowledgeDocumentCreate,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    repo = repo_from(request, session)
+    document = await repo.create_knowledge_document(
+        group_id=payload.group_id,
+        title=payload.title,
+        content=payload.content,
+        enabled=payload.enabled,
+        created_by="admin",
+    )
+    await repo.audit(
+        action="knowledge_doc_create",
+        group_id=document.group_id,
+        target_type="knowledge_doc",
+        target_id=str(document.id),
+        detail={"source": "admin", "chunk_count": document.chunk_count},
+    )
+    await session.commit()
+    return knowledge_document_out(document)
+
+
+@router.patch(
+    "/knowledge-docs/{document_id}",
+    response_model=KnowledgeDocumentOut,
+    dependencies=[Depends(require_admin)],
+)
+async def update_knowledge_doc(
+    document_id: Annotated[int, Path(ge=1)],
+    payload: KnowledgeDocumentUpdate,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    repo = repo_from(request, session)
+    changes = payload.model_dump(exclude_unset=True)
+    document = await repo.update_knowledge_document_by_id(document_id, changes)
+    if document is None:
+        raise HTTPException(status_code=404, detail="knowledge document not found")
+    await repo.audit(
+        action="knowledge_doc_update",
+        group_id=document.group_id,
+        target_type="knowledge_doc",
+        target_id=str(document.id),
+        detail={"source": "admin", "changes": changes},
+    )
+    await session.commit()
+    return knowledge_document_out(document)
+
+
+@router.delete("/knowledge-docs/{document_id}", dependencies=[Depends(require_admin)])
+async def delete_knowledge_doc(
+    document_id: Annotated[int, Path(ge=1)],
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    repo = repo_from(request, session)
+    document = await repo.get_knowledge_document_by_id(document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="knowledge document not found")
+    group_id = document.group_id
+    deleted = await repo.delete_knowledge_document_by_id(document_id)
+    await repo.audit(
+        action="knowledge_doc_delete",
+        group_id=group_id,
+        target_type="knowledge_doc",
+        target_id=str(document_id),
+        detail={"source": "admin"},
+    )
+    await session.commit()
+    return {"deleted": bool(deleted)}
+
+
+@router.post("/knowledge-search", dependencies=[Depends(require_admin)])
+async def search_knowledge(
+    payload: KnowledgeSearchRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    repo = repo_from(request, session)
+    results = await repo.search_knowledge(
+        group_id=payload.group_id,
+        query=payload.query,
+        limit=payload.limit,
+    )
+    return {
+        "results": [
+            {
+                "document_id": item.document_id,
+                "chunk_id": item.chunk_id,
+                "title": item.title,
+                "group_id": item.group_id,
+                "chunk_index": item.chunk_index,
+                "content": item.content,
+                "score": item.score,
+                "source": item.source,
+            }
+            for item in results
+        ]
+    }
 
 
 @router.get("/memories", response_model=list[MemoryOut], dependencies=[Depends(require_admin)])

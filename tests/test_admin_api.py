@@ -399,6 +399,53 @@ def test_memories_can_be_managed_from_admin(tmp_path):
         assert client.get("/api/memories?status=deleted", headers=headers).json()[0]["id"] == memory["id"]
 
 
+def test_knowledge_docs_can_be_created_chunked_and_searched_from_admin(tmp_path):
+    settings = Settings(
+        DATABASE_URL=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",
+        REDIS_URL="",
+        ADMIN_USERNAME="admin",
+        ADMIN_PASSWORD="secret",
+    )
+    app = create_app(settings)
+
+    with TestClient(app) as client:
+        token = client.post(
+            "/api/auth/login", json={"username": "admin", "password": "secret"}
+        ).json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        created = client.post(
+            "/api/knowledge-docs",
+            json={
+                "group_id": "10001",
+                "title": "群规",
+                "content": "禁止广告。提问请带上下文。管理员可以处理违规。",
+                "enabled": True,
+            },
+            headers=headers,
+        )
+        assert created.status_code == 200
+        document = created.json()
+        assert document["title"] == "群规"
+        assert document["chunk_count"] >= 1
+        assert document["index_status"] == "completed"
+
+        listed = client.get("/api/knowledge-docs?group_id=10001", headers=headers)
+        assert listed.status_code == 200
+        assert listed.json()[0]["id"] == document["id"]
+
+        searched = client.post(
+            "/api/knowledge-search",
+            json={"group_id": "10001", "query": "广告"},
+            headers=headers,
+        )
+        assert searched.status_code == 200
+        results = searched.json()["results"]
+        assert results[0]["title"] == "群规"
+        assert "禁止广告" in results[0]["content"]
+        assert results[0]["source"] == f"群规#{results[0]['chunk_index'] + 1}"
+
+
 def test_group_update_rejects_invalid_reply_mode(tmp_path):
     settings = Settings(
         DATABASE_URL=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",

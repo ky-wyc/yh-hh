@@ -225,6 +225,120 @@ class MemoryUpdate(BaseModel):
         return value
 
 
+class KnowledgeDocumentOut(BaseModel):
+    id: int
+    group_id: str
+    title: str
+    content: str
+    enabled: bool
+    index_status: str
+    index_error: str
+    chunk_count: int
+    created_by: str
+    created_at: str
+    updated_at: str
+
+
+class KnowledgeDocumentCreate(BaseModel):
+    group_id: str = ""
+    title: str
+    content: str
+    enabled: bool = True
+
+    @field_validator("group_id")
+    @classmethod
+    def validate_group_id(cls, value: str) -> str:
+        stripped = value.strip()
+        if stripped and not stripped.isdigit():
+            raise ValueError("group_id must be numeric or empty for global knowledge")
+        return stripped
+
+    @field_validator("title")
+    @classmethod
+    def validate_title(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("title must not be empty")
+        if len(stripped) > 255:
+            raise ValueError("title must be 255 characters or fewer")
+        return stripped
+
+    @field_validator("content")
+    @classmethod
+    def validate_knowledge_content(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("content must not be empty")
+        if len(stripped) > 200000:
+            raise ValueError("content must be 200000 characters or fewer")
+        return stripped
+
+
+class KnowledgeDocumentUpdate(BaseModel):
+    group_id: str | None = None
+    title: str | None = None
+    content: str | None = None
+    enabled: bool | None = None
+
+    @field_validator("group_id")
+    @classmethod
+    def validate_group_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        stripped = value.strip()
+        if stripped and not stripped.isdigit():
+            raise ValueError("group_id must be numeric or empty for global knowledge")
+        return stripped
+
+    @field_validator("title")
+    @classmethod
+    def validate_title(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("title must not be empty")
+        if len(stripped) > 255:
+            raise ValueError("title must be 255 characters or fewer")
+        return stripped
+
+    @field_validator("content")
+    @classmethod
+    def validate_knowledge_content(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("content must not be empty")
+        if len(stripped) > 200000:
+            raise ValueError("content must be 200000 characters or fewer")
+        return stripped
+
+
+class KnowledgeSearchRequest(BaseModel):
+    group_id: str = ""
+    query: str
+    limit: int = Field(default=5, ge=1, le=20)
+
+    @field_validator("group_id")
+    @classmethod
+    def validate_group_id(cls, value: str) -> str:
+        stripped = value.strip()
+        if stripped and not stripped.isdigit():
+            raise ValueError("group_id must be numeric or empty")
+        return stripped
+
+    @field_validator("query")
+    @classmethod
+    def validate_query(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("query must not be empty")
+        if len(stripped) > 1000:
+            raise ValueError("query must be 1000 characters or fewer")
+        return stripped
+
+
 class BotSettingsOut(BaseModel):
     default_group_enabled: bool
     default_reply_mode: str

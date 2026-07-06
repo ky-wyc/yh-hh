@@ -32,6 +32,7 @@ class SkillRegistry:
             "help": self.help,
             "ping": self.ping,
             "ai": self.ai,
+            "kb": self.kb,
             "dice": self.dice,
             "remember": self.remember,
             "forget": self.forget,
@@ -60,6 +61,7 @@ class SkillRegistry:
                 f"{prefix}help - 查看帮助",
                 f"{prefix}ping - 健康检查",
                 f"{prefix}ai 问题 - 向大模型提问",
+                f"{prefix}kb 问题 - 查询知识库",
                 f"{prefix}dice 或 {prefix}dice 2d6 - 掷骰子",
                 f"{prefix}remember 内容 - 记录待审核记忆",
                 f"{prefix}forget 记忆ID - 删除自己的记忆",
@@ -86,6 +88,21 @@ class SkillRegistry:
             skill_name="ai",
         )
         return SkillResult(text=result.text, skill_name="ai", llm_model=result.model)
+
+    async def kb(self, args: str, ctx: SkillContext) -> SkillResult:
+        query = args.strip()
+        if not query:
+            return SkillResult(text=f"用法：{ctx.command_prefix}kb 你的问题", skill_name="kb")
+        results = await ctx.repo.search_knowledge(group_id=ctx.group_id, query=query, limit=3)
+        if not results:
+            return SkillResult(text="知识库里没有找到相关资料。", skill_name="kb")
+        lines = ["知识库结果："]
+        for index, item in enumerate(results, start=1):
+            snippet = item.content
+            if len(snippet) > 220:
+                snippet = snippet[:220].rstrip() + "..."
+            lines.append(f"{index}. [{item.source}] {snippet}")
+        return SkillResult(text="\n".join(lines), skill_name="kb")
 
     async def dice(self, args: str, ctx: SkillContext) -> SkillResult:
         spec = args.strip().lower() or "1d6"

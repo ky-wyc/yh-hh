@@ -8,11 +8,14 @@ from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, parse_csv
+from app.knowledge import chunk_text, knowledge_score
 from app.models import (
     AuditLog,
     BotReply,
     Group,
     KeywordRule,
+    KnowledgeChunk,
+    KnowledgeDocument,
     LLMUsageLog,
     MemoryRecord,
     MessageLog,
@@ -55,6 +58,21 @@ class BotConfig:
     @property
     def allowed_group_set(self) -> set[str]:
         return set(parse_csv(self.allowed_groups))
+
+
+@dataclass(slots=True)
+class KnowledgeSearchResult:
+    document_id: int
+    chunk_id: int
+    title: str
+    group_id: str
+    chunk_index: int
+    content: str
+    score: float
+
+    @property
+    def source(self) -> str:
+        return f"{self.title}#{self.chunk_index + 1}"
 
 
 class Repository:
@@ -447,6 +465,129 @@ class Repository:
             .limit(limit)
         )
         return list(result.scalars().all())
+
+    async def create_knowledge_document(
+        self,
+        *,
+        group_id: str,
+        title: str,
+        content: str,
+        enabled: bool,
+        created_by: str,
+    ) -> KnowledgeDocument:
+        document = KnowledgeDocument(
+            group_id=group_id,
+            title=title,
+            content=content,
+            enabled=enabled,
+            created_by=created_by,
+        )
+        self.session.add(document)
+        await self.session.flush()
+        await self.rebuild_knowledge_chunks(document)
+        return document
+
+    async def get_knowledge_document_by_id(self, document_id: int) -> KnowledgeDocument | None:
+        result = await self.session.execute(
+            select(KnowledgeDocument).where(KnowledgeDocument.id == document_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def list_knowledge_documents(self, group_id: str | None = None) -> list[KnowledgeDocument]:
+        query = select(KnowledgeDocument)
+        if group_id is not None:
+            query = query.where(KnowledgeDocument.group_id == group_id)
+        result = await self.session.execute(query.order_by(KnowledgeDocument.id.desc()))
+        return list(result.scalars().all())
+
+    async def update_knowledge_document_by_id(
+        self,
+        document_id: int,
+        changes: dict[str, Any],
+    ) -> KnowledgeDocument | None:
+        document = await self.get_knowledge_document_by_id(document_id)
+        if document is None:
+            return None
+        content_changed = False
+        scope_changed = False
+        for key in ("group_id", "title", "content", "enabled"):
+            if key in changes and changes[key] is not None:
+                if key == "content" and changes[key] != document.content:
+                    content_changed = True
+                if key in {"group_id", "title"} and changes[key] != getattr(document, key):
+                    scope_changed = True
+                setattr(document, key, changes[key])
+        await self.session.flush()
+        if content_changed or scope_changed:
+            await self.rebuild_knowledge_chunks(document)
+        return document
+
+    async def delete_knowledge_document_by_id(self, document_id: int) -> int:
+        document = await self.get_knowledge_document_by_id(document_id)
+        if document is None:
+            return 0
+        await self.session.execute(delete(KnowledgeChunk).where(KnowledgeChunk.document_id == document_id))
+        result = await self.session.execute(delete(KnowledgeDocument).where(KnowledgeDocument.id == document_id))
+        await self.session.flush()
+        return result.rowcount or 0
+
+    async def rebuild_knowledge_chunks(self, document: KnowledgeDocument) -> None:
+        await self.session.execute(delete(KnowledgeChunk).where(KnowledgeChunk.document_id == document.id))
+        try:
+            chunks = chunk_text(document.content)
+            for index, content in enumerate(chunks):
+                self.session.add(
+                    KnowledgeChunk(
+                        document_id=document.id,
+                        group_id=document.group_id,
+                        title=document.title,
+                        chunk_index=index,
+                        content=content,
+                    )
+                )
+            document.chunk_count = len(chunks)
+            document.index_status = "completed"
+            document.index_error = ""
+        except Exception as exc:
+            document.chunk_count = 0
+            document.index_status = "failed"
+            document.index_error = str(exc)[:1000]
+        await self.session.flush()
+
+    async def search_knowledge(
+        self,
+        *,
+        group_id: str,
+        query: str,
+        limit: int = 5,
+    ) -> list[KnowledgeSearchResult]:
+        result = await self.session.execute(
+            select(KnowledgeChunk, KnowledgeDocument)
+            .join(KnowledgeDocument, KnowledgeDocument.id == KnowledgeChunk.document_id)
+            .where(
+                KnowledgeDocument.enabled.is_(True),
+                KnowledgeDocument.index_status == "completed",
+                or_(KnowledgeChunk.group_id == "", KnowledgeChunk.group_id == group_id),
+            )
+        )
+        ranked: list[KnowledgeSearchResult] = []
+        for chunk, document in result.all():
+            score = knowledge_score(query, chunk.content)
+            if score <= 0:
+                continue
+            ranked.append(
+                KnowledgeSearchResult(
+                    document_id=document.id,
+                    chunk_id=chunk.id,
+                    title=chunk.title,
+                    group_id=chunk.group_id,
+                    chunk_index=chunk.chunk_index,
+                    content=chunk.content,
+                    score=score,
+                )
+            )
+        ranked.sort(key=lambda item: item.score, reverse=True)
+        return ranked[:limit]
 
     async def audit(
         self,

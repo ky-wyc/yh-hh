@@ -509,6 +509,32 @@ async def test_forget_command_deletes_own_memory(settings, repo, message_router,
     assert memories[0].status == "deleted"
 
 
+async def test_kb_command_uses_group_scoped_knowledge(settings, repo, message_router, sender):
+    await repo.create_knowledge_document(
+        group_id="10001",
+        title="A 群资料",
+        content="暗号是 alpha",
+        enabled=True,
+        created_by="admin",
+    )
+    await repo.create_knowledge_document(
+        group_id="20002",
+        title="B 群资料",
+        content="暗号是 beta",
+        enabled=True,
+        created_by="admin",
+    )
+    event = normalize_group_message(group_event("/kb 暗号", group_id="10001", message_id=33), settings)
+
+    outcome = await message_router.handle(event, repo, sender)
+
+    assert outcome.replied is True
+    assert outcome.skill_name == "kb"
+    assert "A 群资料#1" in sender.group_messages[0][1]
+    assert "alpha" in sender.group_messages[0][1]
+    assert "beta" not in sender.group_messages[0][1]
+
+
 async def test_configured_command_prefix_is_used_for_routing(settings, repo, message_router, sender):
     await repo.update_bot_settings({"command_prefix": "!"})
     event = normalize_group_message(group_event("!ping", message_id=7), settings)

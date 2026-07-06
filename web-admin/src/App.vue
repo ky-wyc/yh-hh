@@ -7,6 +7,7 @@
         <el-menu-item index="/">仪表盘</el-menu-item>
         <el-menu-item index="/groups">群管理</el-menu-item>
         <el-menu-item index="/keywords">关键词规则</el-menu-item>
+        <el-menu-item index="/knowledge">知识库</el-menu-item>
         <el-menu-item index="/memories">长期记忆</el-menu-item>
         <el-menu-item index="/llm">系统设置</el-menu-item>
         <el-menu-item index="/logs">日志中心</el-menu-item>
