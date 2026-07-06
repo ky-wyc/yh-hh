@@ -34,6 +34,18 @@ def render_config(template_path: Path, env_path: Path) -> dict:
     if bot_qq:
         config.setdefault("Account", {})["Uin"] = _int_or_zero(bot_qq)
 
+    sign_server_url = str(env.get("LAGRANGE_SIGN_SERVER_URL") or "").strip()
+    if sign_server_url:
+        config["SignServerUrl"] = sign_server_url
+
+    sign_proxy_url = str(env.get("LAGRANGE_SIGN_PROXY_URL") or "").strip()
+    if sign_proxy_url:
+        config["SignProxyUrl"] = sign_proxy_url
+
+    music_sign_server_url = str(env.get("LAGRANGE_MUSIC_SIGN_SERVER_URL") or "").strip()
+    if music_sign_server_url:
+        config["MusicSignServerUrl"] = music_sign_server_url
+
     ws_url = str(env.get("ONEBOT_REVERSE_WS_URL") or "ws://bot-app:8000/onebot/ws").strip()
     host, port, suffix = _reverse_ws_parts(ws_url)
     access_token = str(env.get("ONEBOT_ACCESS_TOKEN") or "").strip()
@@ -78,4 +90,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-
