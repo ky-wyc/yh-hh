@@ -362,6 +362,32 @@ async def delete_knowledge_doc(
     return {"deleted": bool(deleted)}
 
 
+@router.post(
+    "/knowledge-docs/{document_id}/reindex",
+    response_model=KnowledgeDocumentOut,
+    dependencies=[Depends(require_admin)],
+)
+async def reindex_knowledge_doc(
+    document_id: Annotated[int, Path(ge=1)],
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    repo = repo_from(request, session)
+    document = await repo.get_knowledge_document_by_id(document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="knowledge document not found")
+    await repo.rebuild_knowledge_chunks(document)
+    await repo.audit(
+        action="knowledge_doc_reindex",
+        group_id=document.group_id,
+        target_type="knowledge_doc",
+        target_id=str(document.id),
+        detail={"source": "admin", "chunk_count": document.chunk_count},
+    )
+    await session.commit()
+    return knowledge_document_out(document)
+
+
 @router.post("/knowledge-search", dependencies=[Depends(require_admin)])
 async def search_knowledge(
     payload: KnowledgeSearchRequest,

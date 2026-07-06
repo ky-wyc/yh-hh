@@ -85,9 +85,10 @@
     <el-table-column prop="updated_at" label="更新时间" width="190">
       <template #default="{ row }">{{ formatTime(row.updated_at) }}</template>
     </el-table-column>
-    <el-table-column label="操作" width="160" fixed="right">
+    <el-table-column label="操作" width="250" fixed="right">
       <template #default="{ row }">
         <el-button size="small" @click="editDocument(row)">编辑</el-button>
+        <el-button size="small" type="primary" plain @click="reindexDocument(row)">重建索引</el-button>
         <el-button size="small" type="danger" plain @click="deleteDocument(row)">删除</el-button>
       </template>
     </el-table-column>
@@ -240,6 +241,16 @@ async function toggleDocument(document: KnowledgeDocument) {
   } catch (error: any) {
     ElMessage.error(errorText(error, '更新文档状态失败'))
     await load()
+  }
+}
+
+async function reindexDocument(document: KnowledgeDocument) {
+  try {
+    await api.post(`/knowledge-docs/${document.id}/reindex`)
+    ElMessage.success('已重建索引')
+    await load()
+  } catch (error: any) {
+    ElMessage.error(errorText(error, '重建索引失败'))
   }
 }
 

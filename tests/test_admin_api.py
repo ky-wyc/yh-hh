@@ -446,6 +446,42 @@ def test_knowledge_docs_can_be_created_chunked_and_searched_from_admin(tmp_path)
         assert results[0]["source"] == f"群规#{results[0]['chunk_index'] + 1}"
 
 
+def test_knowledge_doc_can_be_reindexed_from_admin(tmp_path):
+    settings = Settings(
+        DATABASE_URL=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",
+        REDIS_URL="",
+        ADMIN_USERNAME="admin",
+        ADMIN_PASSWORD="secret",
+    )
+    app = create_app(settings)
+
+    with TestClient(app) as client:
+        token = client.post(
+            "/api/auth/login", json={"username": "admin", "password": "secret"}
+        ).json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        created = client.post(
+            "/api/knowledge-docs",
+            json={
+                "group_id": "10001",
+                "title": "FAQ",
+                "content": "部署问题请查看运维说明。",
+                "enabled": True,
+            },
+            headers=headers,
+        ).json()
+
+        reindexed = client.post(f"/api/knowledge-docs/{created['id']}/reindex", headers=headers)
+
+        assert reindexed.status_code == 200
+        payload = reindexed.json()
+        assert payload["index_status"] == "completed"
+        assert payload["chunk_count"] >= 1
+        audit = client.get("/api/audit-logs", headers=headers)
+        assert audit.json()[0]["action"] == "knowledge_doc_reindex"
+
+
 def test_group_update_rejects_invalid_reply_mode(tmp_path):
     settings = Settings(
         DATABASE_URL=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",

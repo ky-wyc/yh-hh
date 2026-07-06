@@ -8,6 +8,7 @@ from sqlalchemy.pool import NullPool
 from sqlalchemy.orm import DeclarativeBase
 
 from app.config import Settings
+from app.migrations import run_migrations
 
 
 class Base(DeclarativeBase):
@@ -32,6 +33,7 @@ async def init_db(engine: AsyncEngine) -> None:
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await run_migrations(conn)
 
 
 async def session_dependency(
