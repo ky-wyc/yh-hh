@@ -91,6 +91,85 @@ def test_llm_settings_can_clear_api_key(tmp_path):
         assert response.json()["api_key_configured"] is False
 
 
+def test_embedding_settings_can_be_managed_and_mask_api_key(tmp_path):
+    settings = Settings(
+        DATABASE_URL=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",
+        REDIS_URL="",
+        ADMIN_USERNAME="admin",
+        ADMIN_PASSWORD="secret",
+        EMBEDDING_API_KEY="embedding-secret",
+    )
+    app = create_app(settings)
+
+    with TestClient(app) as client:
+        token = client.post(
+            "/api/auth/login", json={"username": "admin", "password": "secret"}
+        ).json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        current = client.get("/api/settings/embedding", headers=headers)
+        assert current.status_code == 200
+        assert current.json()["api_key_configured"] is True
+        assert "embedding-secret" not in str(current.json())
+
+        updated = client.patch(
+            "/api/settings/embedding",
+            json={
+                "provider": "openai_compatible",
+                "base_url": "https://embed.example/v1",
+                "api_key": "new-secret",
+                "model": "embed-model",
+                "dimensions": 128,
+                "timeout_seconds": 15,
+            },
+            headers=headers,
+        )
+        assert updated.status_code == 200
+        payload = updated.json()
+        assert payload["provider"] == "openai_compatible"
+        assert payload["base_url"] == "https://embed.example/v1"
+        assert payload["model"] == "embed-model"
+        assert payload["dimensions"] == 128
+        assert payload["api_key_configured"] is True
+        assert "new-secret" not in str(payload)
+
+        cleared = client.patch(
+            "/api/settings/embedding",
+            json={"api_key": ""},
+            headers=headers,
+        )
+        assert cleared.status_code == 200
+        assert cleared.json()["api_key_configured"] is False
+
+
+def test_embedding_settings_local_test_does_not_require_api_key(tmp_path):
+    settings = Settings(
+        DATABASE_URL=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",
+        REDIS_URL="",
+        ADMIN_USERNAME="admin",
+        ADMIN_PASSWORD="secret",
+    )
+    app = create_app(settings)
+
+    with TestClient(app) as client:
+        token = client.post(
+            "/api/auth/login", json={"username": "admin", "password": "secret"}
+        ).json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        response = client.post(
+            "/api/settings/embedding/test",
+            json={"text": "hello"},
+            headers=headers,
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["status"] == "success"
+        assert payload["provider"] == "local"
+        assert payload["actual_dimensions"] == 64
+
+
 def test_llm_usage_log_is_queryable(tmp_path):
     settings = Settings(
         DATABASE_URL=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",

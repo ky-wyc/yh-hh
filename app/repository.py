@@ -9,7 +9,8 @@ from sqlalchemy import delete, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, parse_csv
-from app.knowledge import cosine_similarity, chunk_text, embed_text, knowledge_score, vector_literal
+from app.embedding import EmbeddingConfig, EmbeddingService
+from app.knowledge import cosine_similarity, chunk_text, knowledge_score, vector_literal
 from app.models import (
     AuditLog,
     BotReply,
@@ -92,9 +93,15 @@ class KnowledgeSearchResult:
 
 
 class Repository:
-    def __init__(self, session: AsyncSession, settings: Settings):
+    def __init__(
+        self,
+        session: AsyncSession,
+        settings: Settings,
+        embedding_service: EmbeddingService | None = None,
+    ):
         self.session = session
         self.settings = settings
+        self.embedding_service = embedding_service or EmbeddingService()
 
     async def ensure_user(self, qq_id: str, nickname: str = "") -> User:
         result = await self.session.execute(select(User).where(User.qq_id == qq_id))
@@ -292,6 +299,40 @@ class Repository:
             "temperature": "llm_temperature",
             "max_tokens": "llm_max_tokens",
             "timeout_seconds": "llm_timeout_seconds",
+        }
+        for field, value in changes.items():
+            if value is not None and field in key_map:
+                await self.set_setting(key_map[field], str(value))
+
+    async def get_embedding_config(self) -> EmbeddingConfig:
+        async def val(key: str, default: str) -> str:
+            stored = await self.get_setting(key)
+            return default if stored is None else stored
+
+        return EmbeddingConfig(
+            provider=await val("embedding_provider", self.settings.embedding_provider),
+            base_url=await val("embedding_base_url", self.settings.embedding_base_url),
+            api_key=await val("embedding_api_key", self.settings.embedding_api_key),
+            model=await val("embedding_model", self.settings.embedding_model),
+            dimensions=int(
+                await val("embedding_dimensions", str(self.settings.embedding_dimensions))
+            ),
+            timeout_seconds=float(
+                await val(
+                    "embedding_timeout_seconds",
+                    str(self.settings.embedding_timeout_seconds),
+                )
+            ),
+        )
+
+    async def update_embedding_config(self, changes: dict[str, Any]) -> None:
+        key_map = {
+            "provider": "embedding_provider",
+            "base_url": "embedding_base_url",
+            "api_key": "embedding_api_key",
+            "model": "embedding_model",
+            "dimensions": "embedding_dimensions",
+            "timeout_seconds": "embedding_timeout_seconds",
         }
         for field, value in changes.items():
             if value is not None and field in key_map:
@@ -762,10 +803,11 @@ class Repository:
     async def rebuild_knowledge_chunks(self, document: KnowledgeDocument) -> None:
         await self.session.execute(delete(KnowledgeChunk).where(KnowledgeChunk.document_id == document.id))
         try:
+            config = await self.get_embedding_config()
             chunks = chunk_text(document.content)
             chunk_records: list[tuple[KnowledgeChunk, list[float]]] = []
             for index, content in enumerate(chunks):
-                embedding = embed_text(content)
+                embedding = await self.embedding_service.embed(config, content)
                 chunk = KnowledgeChunk(
                     document_id=document.id,
                     group_id=document.group_id,
@@ -793,6 +835,8 @@ class Repository:
     ) -> None:
         bind = self.session.get_bind()
         if bind.dialect.name != "postgresql" or not chunks:
+            return
+        if any(len(embedding) != 64 for _, embedding in chunks):
             return
         try:
             async with self.session.begin_nested():
@@ -835,7 +879,11 @@ class Repository:
                 or_(KnowledgeChunk.group_id == "", KnowledgeChunk.group_id == group_id),
             )
         )
-        query_embedding = embed_text(query)
+        try:
+            config = await self.get_embedding_config()
+            query_embedding = await self.embedding_service.embed(config, query)
+        except Exception:
+            query_embedding = []
         ranked: list[KnowledgeSearchResult] = []
         for chunk, document in result.all():
             vector_score = cosine_similarity(query_embedding, self._chunk_embedding(chunk))

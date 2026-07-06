@@ -13,6 +13,9 @@ from app.repository import Repository
 from app.schemas import (
     BotSettingsOut,
     BotSettingsUpdate,
+    EmbeddingSettingsOut,
+    EmbeddingSettingsUpdate,
+    EmbeddingTestRequest,
     GroupUpdate,
     GroupDetailOut,
     GroupModerationConfigOut,
@@ -55,7 +58,7 @@ async def get_session(request: Request) -> AsyncSession:
 
 
 def repo_from(request: Request, session: AsyncSession) -> Repository:
-    return Repository(session, request.app.state.settings)
+    return Repository(session, request.app.state.settings, request.app.state.embedding)
 
 
 def keyword_rule_out(rule) -> KeywordRuleOut:
@@ -846,6 +849,66 @@ async def test_llm_settings(
     result = await request.app.state.llm.chat(repo, payload.prompt, skill_name="admin_test")
     await session.commit()
     return {"status": result.status, "model": result.model, "text": result.text}
+
+
+@router.get(
+    "/settings/embedding",
+    response_model=EmbeddingSettingsOut,
+    dependencies=[Depends(require_admin)],
+)
+async def get_embedding_settings(request: Request, session: AsyncSession = Depends(get_session)):
+    repo = repo_from(request, session)
+    config = await repo.get_embedding_config()
+    return EmbeddingSettingsOut(
+        provider=config.provider,
+        base_url=config.base_url,
+        model=config.model,
+        dimensions=config.dimensions,
+        timeout_seconds=config.timeout_seconds,
+        api_key_configured=bool(config.api_key),
+    )
+
+
+@router.patch("/settings/embedding", dependencies=[Depends(require_admin)])
+async def update_embedding_settings(
+    payload: EmbeddingSettingsUpdate,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    repo = repo_from(request, session)
+    await repo.update_embedding_config(payload.model_dump(exclude_unset=True))
+    await repo.audit(action="embedding_settings_update", target_type="settings", target_id="embedding")
+    await session.commit()
+    return await get_embedding_settings(request, session)
+
+
+@router.post("/settings/embedding/test", dependencies=[Depends(require_admin)])
+async def test_embedding_settings(
+    payload: EmbeddingTestRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    repo = repo_from(request, session)
+    config = await repo.get_embedding_config()
+    try:
+        vector = await request.app.state.embedding.embed(config, payload.text)
+    except Exception as exc:
+        return {
+            "status": "failed",
+            "provider": config.provider,
+            "model": config.model,
+            "dimensions": config.dimensions,
+            "actual_dimensions": 0,
+            "error": str(exc),
+        }
+    return {
+        "status": "success",
+        "provider": config.provider,
+        "model": config.model,
+        "dimensions": config.dimensions,
+        "actual_dimensions": len(vector),
+        "error": "",
+    }
 
 
 @router.get("/system/logs", dependencies=[Depends(require_admin)])

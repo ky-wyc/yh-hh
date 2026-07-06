@@ -12,6 +12,7 @@ from app.auth import TokenStore
 from app.cache import create_rate_limiter
 from app.config import Settings, get_settings
 from app.db import create_engine, create_session_factory, init_db
+from app.embedding import EmbeddingService
 from app.events import normalize_group_message, normalize_group_notice
 from app.llm import LLMService
 from app.onebot import OneBotConnectionManager, websocket_event_stream
@@ -63,6 +64,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.session_factory = create_session_factory(app.state.engine)
     app.state.onebot = OneBotConnectionManager()
     app.state.llm = LLMService()
+    app.state.embedding = EmbeddingService()
     app.state.token_store = TokenStore()
 
     @app.websocket(settings.onebot_reverse_ws_path)
@@ -86,7 +88,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     if notice is None:
                         continue
                     async with app.state.session_factory() as session:
-                        repo = Repository(session, settings)
+                        repo = Repository(session, settings, app.state.embedding)
                         try:
                             await app.state.message_router.handle_group_notice(
                                 notice,
@@ -100,7 +102,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                             app.state.onebot.status.last_error = str(exc)
                     continue
                 async with app.state.session_factory() as session:
-                    repo = Repository(session, settings)
+                    repo = Repository(session, settings, app.state.embedding)
                     try:
                         await app.state.message_router.handle(event, repo, app.state.onebot)
                         await session.commit()

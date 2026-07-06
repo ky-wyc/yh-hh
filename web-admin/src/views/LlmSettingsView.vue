@@ -52,6 +52,85 @@
     </el-alert>
   </el-card>
 
+  <h2 class="page-title section-title">知识库 Embedding 设置</h2>
+  <el-card>
+    <el-form label-width="130px">
+      <el-form-item label="Provider">
+        <el-select v-model="embeddingForm.provider">
+          <el-option label="本地确定性向量" value="local" />
+          <el-option label="OpenAI Compatible" value="openai_compatible" />
+        </el-select>
+      </el-form-item>
+      <el-form-item label="Base URL">
+        <el-input
+          v-model="embeddingForm.base_url"
+          :disabled="embeddingForm.provider === 'local'"
+        />
+      </el-form-item>
+      <el-form-item label="API Key">
+        <el-input
+          v-model="embeddingForm.api_key"
+          placeholder="留空则不修改"
+          show-password
+          :disabled="embeddingForm.provider === 'local'"
+        />
+        <span class="field-hint">
+          {{ embeddingForm.api_key_configured ? '当前已配置' : '当前未配置' }}
+        </span>
+      </el-form-item>
+      <el-form-item label="Embedding 模型">
+        <el-input
+          v-model="embeddingForm.model"
+          :disabled="embeddingForm.provider === 'local'"
+        />
+      </el-form-item>
+      <el-form-item label="向量维度">
+        <el-input-number v-model="embeddingForm.dimensions" :min="16" :max="3072" />
+        <span class="field-hint">默认 64；维度变化后需要重建知识库索引</span>
+      </el-form-item>
+      <el-form-item label="超时秒数">
+        <el-input-number v-model="embeddingForm.timeout_seconds" :min="1" :max="300" />
+      </el-form-item>
+      <el-form-item label="测试文本">
+        <el-input
+          v-model="embeddingTestText"
+          type="textarea"
+          :rows="2"
+          maxlength="500"
+          show-word-limit
+        />
+      </el-form-item>
+      <el-form-item>
+        <el-button type="primary" :loading="embeddingSaving" @click="saveEmbedding">保存 Embedding</el-button>
+        <el-button :loading="embeddingTesting" @click="testEmbedding">测试 Embedding</el-button>
+        <el-button
+          type="danger"
+          plain
+          :disabled="embeddingForm.provider === 'local'"
+          :loading="embeddingClearingKey"
+          @click="clearEmbeddingApiKey"
+        >
+          清空 API Key
+        </el-button>
+      </el-form-item>
+    </el-form>
+    <el-alert
+      v-if="embeddingTestResult"
+      class="test-result"
+      :type="embeddingTestResult.status === 'success' ? 'success' : 'warning'"
+      :title="`测试结果：${embeddingTestResult.status}`"
+      :closable="false"
+      show-icon
+    >
+      <p class="result-meta">
+        Provider：{{ embeddingTestResult.provider }} /
+        模型：{{ embeddingTestResult.model || '-' }} /
+        维度：{{ embeddingTestResult.actual_dimensions }}
+      </p>
+      <p v-if="embeddingTestResult.error" class="result-text">{{ embeddingTestResult.error }}</p>
+    </el-alert>
+  </el-card>
+
   <h2 class="page-title section-title">机器人运营设置</h2>
   <el-card>
     <el-form label-width="130px">
@@ -99,20 +178,35 @@ import { api } from '../api'
 
 const form = reactive<any>({})
 const botForm = reactive<any>({})
+const embeddingForm = reactive<any>({})
 const saving = ref(false)
 const testing = ref(false)
 const clearingKey = ref(false)
 const botSaving = ref(false)
+const embeddingSaving = ref(false)
+const embeddingTesting = ref(false)
+const embeddingClearingKey = ref(false)
 const testPrompt = ref('请回复 pong')
 const testResult = ref<{ status: string; model: string; text: string } | null>(null)
+const embeddingTestText = ref('部署 preflight 检查')
+const embeddingTestResult = ref<{
+  status: string
+  provider: string
+  model: string
+  dimensions: number
+  actual_dimensions: number
+  error: string
+} | null>(null)
 
 async function load() {
-  const [{ data: llm }, { data: bot }] = await Promise.all([
+  const [{ data: llm }, { data: bot }, { data: embedding }] = await Promise.all([
     api.get('/settings/llm'),
-    api.get('/settings/bot')
+    api.get('/settings/bot'),
+    api.get('/settings/embedding')
   ])
   Object.assign(form, llm, { api_key: '' })
   Object.assign(botForm, bot)
+  Object.assign(embeddingForm, embedding, { api_key: '' })
 }
 
 async function save() {
@@ -168,6 +262,62 @@ async function clearApiKey() {
     ElMessage.error(error?.response?.data?.detail || '清空 API Key 失败')
   } finally {
     clearingKey.value = false
+  }
+}
+
+async function saveEmbedding() {
+  const payload = { ...embeddingForm }
+  if (!payload.api_key) delete payload.api_key
+  embeddingSaving.value = true
+  try {
+    await api.patch('/settings/embedding', payload)
+    ElMessage.success('已保存 Embedding 设置')
+    await load()
+  } catch (error: any) {
+    ElMessage.error(error?.response?.data?.detail || '保存 Embedding 设置失败')
+  } finally {
+    embeddingSaving.value = false
+  }
+}
+
+async function testEmbedding() {
+  embeddingTesting.value = true
+  embeddingTestResult.value = null
+  try {
+    const { data } = await api.post('/settings/embedding/test', { text: embeddingTestText.value })
+    embeddingTestResult.value = data
+    if (data.status === 'success') {
+      ElMessage.success('Embedding 测试成功')
+    } else {
+      ElMessage.warning('Embedding 测试未成功，请查看结果')
+    }
+  } catch (error: any) {
+    ElMessage.error(error?.response?.data?.detail || 'Embedding 测试失败')
+  } finally {
+    embeddingTesting.value = false
+  }
+}
+
+async function clearEmbeddingApiKey() {
+  try {
+    await ElMessageBox.confirm('清空后外部 Embedding 会不可用，直到重新保存新的 API Key。', '清空 Embedding API Key', {
+      type: 'warning',
+      confirmButtonText: '清空',
+      cancelButtonText: '取消'
+    })
+  } catch {
+    return
+  }
+
+  embeddingClearingKey.value = true
+  try {
+    await api.patch('/settings/embedding', { api_key: '' })
+    ElMessage.success('已清空 Embedding API Key')
+    await load()
+  } catch (error: any) {
+    ElMessage.error(error?.response?.data?.detail || '清空 Embedding API Key 失败')
+  } finally {
+    embeddingClearingKey.value = false
   }
 }
 

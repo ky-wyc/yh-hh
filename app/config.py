@@ -43,6 +43,13 @@ class Settings(BaseSettings):
     llm_max_tokens: int = Field(default=1000, alias="LLM_MAX_TOKENS")
     llm_timeout_seconds: float = Field(default=30, alias="LLM_TIMEOUT_SECONDS")
 
+    embedding_provider: str = Field(default="local", alias="EMBEDDING_PROVIDER")
+    embedding_base_url: str = Field(default="https://api.openai.com/v1", alias="EMBEDDING_BASE_URL")
+    embedding_api_key: str = Field(default="", alias="EMBEDDING_API_KEY")
+    embedding_model: str = Field(default="text-embedding-3-small", alias="EMBEDDING_MODEL")
+    embedding_dimensions: int = Field(default=64, alias="EMBEDDING_DIMENSIONS")
+    embedding_timeout_seconds: float = Field(default=30, alias="EMBEDDING_TIMEOUT_SECONDS")
+
     rate_limit_per_user_per_minute: int = Field(default=12, alias="RATE_LIMIT_PER_USER_PER_MINUTE")
     rate_limit_per_group_per_minute: int = Field(default=60, alias="RATE_LIMIT_PER_GROUP_PER_MINUTE")
 

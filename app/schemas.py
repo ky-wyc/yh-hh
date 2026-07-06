@@ -639,3 +639,67 @@ class LLMSettingsUpdate(BaseModel):
 
 class LLMTestRequest(BaseModel):
     prompt: str = "ping"
+
+
+class EmbeddingSettingsOut(BaseModel):
+    provider: str
+    base_url: str
+    model: str
+    dimensions: int
+    timeout_seconds: float
+    api_key_configured: bool
+
+
+class EmbeddingSettingsUpdate(BaseModel):
+    provider: str | None = None
+    base_url: str | None = None
+    api_key: str | None = Field(default=None)
+    model: str | None = None
+    dimensions: int | None = Field(default=None, ge=16, le=3072)
+    timeout_seconds: float | None = Field(default=None, ge=1, le=300)
+
+    @field_validator("provider")
+    @classmethod
+    def validate_provider(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        stripped = value.strip()
+        if stripped not in {"local", "openai_compatible"}:
+            raise ValueError("provider must be local or openai_compatible")
+        return stripped
+
+    @field_validator("model")
+    @classmethod
+    def validate_model(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("model must not be empty")
+        return value.strip() if value is not None else value
+
+    @field_validator("base_url")
+    @classmethod
+    def validate_embedding_base_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("base_url must not be empty")
+        parsed = urlparse(stripped)
+        if parsed.scheme not in {"http", "https"}:
+            raise ValueError("base_url must start with http:// or https://")
+        if not parsed.hostname:
+            raise ValueError("base_url must include a host")
+        return stripped
+
+
+class EmbeddingTestRequest(BaseModel):
+    text: str = "ping"
+
+    @field_validator("text")
+    @classmethod
+    def validate_text(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("text must not be empty")
+        if len(stripped) > 1000:
+            raise ValueError("text must be 1000 characters or fewer")
+        return stripped
