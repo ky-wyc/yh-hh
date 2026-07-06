@@ -447,6 +447,22 @@ class KnowledgeReindexOut(BaseModel):
     results: list[KnowledgeReindexItemOut]
 
 
+class KnowledgeReindexRunOut(BaseModel):
+    id: int
+    action: str
+    group_id: str
+    target_id: str
+    total: int
+    succeeded: int
+    failed: int
+    skipped: int
+    only_failed: bool
+    include_disabled: bool
+    result: str
+    error_message: str
+    created_at: str
+
+
 class ScheduledTaskOut(BaseModel):
     id: int
     name: str

@@ -596,6 +596,12 @@ def test_knowledge_doc_can_be_reindexed_from_admin(tmp_path):
         assert payload["chunk_count"] >= 1
         audit = client.get("/api/audit-logs", headers=headers)
         assert audit.json()[0]["action"] == "knowledge_doc_reindex"
+        history = client.get("/api/knowledge-docs/reindex-runs?group_id=10001", headers=headers)
+        assert history.status_code == 200
+        assert history.json()[0]["action"] == "knowledge_doc_reindex"
+        assert history.json()[0]["total"] == 1
+        assert history.json()[0]["succeeded"] == 1
+        assert history.json()[0]["failed"] == 0
 
 
 def test_knowledge_docs_can_be_bulk_reindexed_and_retry_failed_from_admin(tmp_path):
@@ -669,6 +675,12 @@ def test_knowledge_docs_can_be_bulk_reindexed_and_retry_failed_from_admin(tmp_pa
 
         audit = client.get("/api/audit-logs", headers=headers)
         assert audit.json()[0]["action"] == "knowledge_docs_reindex"
+        history = client.get("/api/knowledge-docs/reindex-runs?group_id=10001", headers=headers)
+        assert history.status_code == 200
+        assert history.json()[0]["action"] == "knowledge_docs_reindex"
+        assert history.json()[0]["only_failed"] is True
+        assert history.json()[1]["total"] == 2
+        assert history.json()[1]["succeeded"] == 2
 
 
 def test_scheduled_tasks_can_be_managed_from_admin(tmp_path):

@@ -28,6 +28,7 @@ from app.schemas import (
     KnowledgeReindexItemOut,
     KnowledgeReindexOut,
     KnowledgeReindexRequest,
+    KnowledgeReindexRunOut,
     KnowledgeSearchRequest,
     LLMSettingsOut,
     LLMSettingsUpdate,
@@ -105,6 +106,31 @@ def knowledge_document_out(document) -> KnowledgeDocumentOut:
         created_by=document.created_by,
         created_at=document.created_at.isoformat(),
         updated_at=document.updated_at.isoformat(),
+    )
+
+
+def knowledge_reindex_run_out(record) -> KnowledgeReindexRunOut:
+    try:
+        detail = json.loads(record.detail_json or "{}")
+        if not isinstance(detail, dict):
+            detail = {}
+    except json.JSONDecodeError:
+        detail = {}
+    total = int(detail.get("processed") or detail.get("total") or 0)
+    return KnowledgeReindexRunOut(
+        id=record.id,
+        action=record.action,
+        group_id=record.group_id,
+        target_id=record.target_id,
+        total=total,
+        succeeded=int(detail.get("succeeded") or 0),
+        failed=int(detail.get("failed") or 0),
+        skipped=int(detail.get("skipped") or 0),
+        only_failed=bool(detail.get("only_failed", False)),
+        include_disabled=bool(detail.get("include_disabled", False)),
+        result=record.result,
+        error_message=str(detail.get("index_error") or detail.get("error_message") or "")[:1000],
+        created_at=record.created_at.isoformat(),
     )
 
 
@@ -681,6 +707,7 @@ async def reindex_knowledge_docs(
             "failed": failed,
             "skipped": skipped,
         },
+        result="failed" if failed else "success",
     )
     await session.commit()
     return KnowledgeReindexOut(
@@ -690,6 +717,22 @@ async def reindex_knowledge_docs(
         skipped=skipped,
         results=results,
     )
+
+
+@router.get(
+    "/knowledge-docs/reindex-runs",
+    response_model=list[KnowledgeReindexRunOut],
+    dependencies=[Depends(require_admin)],
+)
+async def list_knowledge_reindex_runs(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    group_id: str | None = Query(default=None, pattern=r"^\d*$"),
+    limit: int = Query(default=20, ge=1, le=100),
+):
+    repo = repo_from(request, session)
+    runs = await repo.list_knowledge_reindex_runs(group_id=group_id, limit=limit)
+    return [knowledge_reindex_run_out(run) for run in runs]
 
 
 @router.patch(
@@ -757,12 +800,24 @@ async def reindex_knowledge_doc(
     if document is None:
         raise HTTPException(status_code=404, detail="knowledge document not found")
     await repo.rebuild_knowledge_chunks(document)
+    succeeded = 1 if document.index_status in {"completed", "vectorized"} else 0
+    failed = 0 if succeeded else 1
     await repo.audit(
         action="knowledge_doc_reindex",
         group_id=document.group_id,
         target_type="knowledge_doc",
         target_id=str(document.id),
-        detail={"source": "admin", "chunk_count": document.chunk_count},
+        detail={
+            "source": "admin",
+            "processed": 1,
+            "succeeded": succeeded,
+            "failed": failed,
+            "skipped": 0,
+            "chunk_count": document.chunk_count,
+            "index_status": document.index_status,
+            "index_error": document.index_error,
+        },
+        result="success" if succeeded else "failed",
     )
     await session.commit()
     return knowledge_document_out(document)

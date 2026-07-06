@@ -53,6 +53,34 @@
   </el-card>
 
   <el-card class="toolbar-card">
+    <template #header>最近索引记录</template>
+    <el-table :data="reindexRuns" border v-loading="historyLoading">
+      <el-table-column label="类型" width="110">
+        <template #default="{ row }">{{ reindexActionText(row.action, row.only_failed) }}</template>
+      </el-table-column>
+      <el-table-column label="作用群" width="120">
+        <template #default="{ row }">
+          <el-tag v-if="row.group_id" type="info">{{ row.group_id }}</el-tag>
+          <el-tag v-else>全局</el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column prop="total" label="处理" width="80" />
+      <el-table-column prop="succeeded" label="成功" width="80" />
+      <el-table-column prop="failed" label="失败" width="80" />
+      <el-table-column prop="skipped" label="跳过" width="80" />
+      <el-table-column label="结果" width="90">
+        <template #default="{ row }">
+          <el-tag :type="row.result === 'success' ? 'success' : 'danger'">{{ row.result }}</el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column prop="error_message" label="错误摘要" min-width="180" show-overflow-tooltip />
+      <el-table-column label="时间" width="190">
+        <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
+      </el-table-column>
+    </el-table>
+  </el-card>
+
+  <el-card class="toolbar-card">
     <el-form :model="form" label-width="90px" class="knowledge-form">
       <el-form-item label="作用群">
         <el-input v-model="form.group_id" placeholder="留空为全局知识，或填写 QQ 群号" />
@@ -141,9 +169,27 @@ type SearchResult = {
   score: number
 }
 
+type ReindexRun = {
+  id: number
+  action: string
+  group_id: string
+  target_id: string
+  total: number
+  succeeded: number
+  failed: number
+  skipped: number
+  only_failed: boolean
+  include_disabled: boolean
+  result: string
+  error_message: string
+  created_at: string
+}
+
 const documents = ref<KnowledgeDocument[]>([])
 const searchResults = ref<SearchResult[]>([])
+const reindexRuns = ref<ReindexRun[]>([])
 const loading = ref(false)
+const historyLoading = ref(false)
 const saving = ref(false)
 const searching = ref(false)
 const bulkReindexing = ref(false)
@@ -210,10 +256,25 @@ async function load() {
     if (filters.index_status) params.index_status = filters.index_status
     const { data } = await api.get('/knowledge-docs', { params })
     documents.value = data
+    await loadReindexRuns()
   } catch (error: any) {
     ElMessage.error(errorText(error, '加载知识库失败'))
   } finally {
     loading.value = false
+  }
+}
+
+async function loadReindexRuns() {
+  historyLoading.value = true
+  try {
+    const params: Record<string, string | number> = { limit: 10 }
+    if (filters.group_id.trim()) params.group_id = filters.group_id.trim()
+    const { data } = await api.get('/knowledge-docs/reindex-runs', { params })
+    reindexRuns.value = data
+  } catch (error: any) {
+    ElMessage.error(errorText(error, '加载索引记录失败'))
+  } finally {
+    historyLoading.value = false
   }
 }
 
@@ -381,6 +442,12 @@ function formatTime(value: string) {
 
 function isHealthyIndex(value: string) {
   return value === 'completed' || value === 'vectorized'
+}
+
+function reindexActionText(action: string, onlyFailed: boolean) {
+  if (action === 'knowledge_doc_reindex') return '单篇重建'
+  if (onlyFailed) return '重试失败'
+  return '批量重建'
 }
 
 onMounted(load)
