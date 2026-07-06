@@ -10,7 +10,7 @@ from app.events import BotEvent, GroupNoticeEvent
 from app.llm import LLMService
 from app.models import now_utc
 from app.repository import Repository
-from app.skills import SkillContext, SkillRegistry
+from app.skills import PRIVATE_SUPPORTED_SKILLS, SkillContext, SkillRegistry
 
 
 @dataclass(slots=True)
@@ -30,6 +30,9 @@ class MessageRouter:
         self.skills = SkillRegistry()
 
     async def handle(self, event: BotEvent, repo: Repository, sender) -> RouteOutcome:
+        if event.message_type == "private":
+            return await self.handle_private(event, repo, sender)
+
         message_log, duplicate = await repo.save_message(
             group_id=event.group_id,
             user_id=event.user_id,
@@ -37,6 +40,7 @@ class MessageRouter:
             dedup_key=event.dedup_key,
             content=event.text,
             raw_event=event.raw,
+            message_type=event.message_type,
         )
         if duplicate:
             return RouteOutcome(status="dropped", reason="duplicate")
@@ -244,6 +248,160 @@ class MessageRouter:
         await repo.mark_message(message_log, "observed", "no_trigger")
         return RouteOutcome(status="observed", reason="no_trigger")
 
+    async def handle_private(self, event: BotEvent, repo: Repository, sender) -> RouteOutcome:
+        message_log, duplicate = await repo.save_message(
+            group_id="",
+            user_id=event.user_id,
+            message_id=event.message_id,
+            dedup_key=event.dedup_key,
+            content=event.text,
+            raw_event=event.raw,
+            message_type="private",
+        )
+        if duplicate:
+            return RouteOutcome(status="dropped", reason="duplicate")
+
+        bot_settings = await repo.get_bot_settings()
+        bot_qq = bot_settings.bot_qq or self.settings.bot_qq or event.self_id
+        if bot_qq and event.user_id == bot_qq:
+            await repo.mark_message(message_log, "dropped", "bot_self_message")
+            return RouteOutcome(status="dropped", reason="bot_self_message")
+
+        if not bot_settings.private_chat_enabled:
+            await repo.mark_message(message_log, "dropped", "private_chat_disabled")
+            return RouteOutcome(status="dropped", reason="private_chat_disabled")
+
+        whitelist = bot_settings.private_chat_whitelist_set
+        if not whitelist or event.user_id not in whitelist:
+            await repo.mark_message(message_log, "dropped", "private_user_not_allowed")
+            return RouteOutcome(status="dropped", reason="private_user_not_allowed")
+
+        await repo.ensure_user(event.user_id, event.nickname)
+        try:
+            await self.rate_limiter.check(
+                f"private_user:{event.user_id}", bot_settings.rate_limit_per_user_per_minute
+            )
+        except RateLimitExceeded as exc:
+            await repo.mark_message(message_log, "dropped", f"rate_limited:{exc}")
+            return RouteOutcome(status="dropped", reason="rate_limited")
+
+        context_key = f"private:{event.user_id}"
+        await self.rate_limiter.append_context(context_key, f"{event.nickname or event.user_id}: {event.text}")
+
+        command = self._parse_command(event.text, bot_settings.command_prefix)
+        enabled_skills = (
+            await repo.enabled_skill_names("", self.skills.skill_names)
+        ).intersection(PRIVATE_SUPPORTED_SKILLS)
+        if command:
+            name, args = command
+            skill_name = self.skills.command_skill_name(name)
+            if skill_name is not None and skill_name not in PRIVATE_SUPPORTED_SKILLS:
+                text = f"该功能不支持私聊：{skill_name}"
+                if not await self._send_private_reply(event, message_log, repo, sender, text):
+                    return RouteOutcome(status="error", reason="send_failed")
+                await repo.save_reply(
+                    group_id="",
+                    user_id=event.user_id,
+                    trigger_type="private_command_unsupported",
+                    input_message_id=event.message_id,
+                    content=text,
+                    skill_name=skill_name,
+                )
+                await repo.mark_message(message_log, "handled", f"private_skill_unsupported:{skill_name}")
+                return RouteOutcome(
+                    status="handled",
+                    reason="private_skill_unsupported",
+                    replied=True,
+                    reply_text=text,
+                    skill_name=skill_name,
+                )
+            if skill_name is not None and skill_name not in enabled_skills:
+                text = f"该功能已关闭：{skill_name}"
+                if not await self._send_private_reply(event, message_log, repo, sender, text):
+                    return RouteOutcome(status="error", reason="send_failed")
+                await repo.save_reply(
+                    group_id="",
+                    user_id=event.user_id,
+                    trigger_type="private_command_disabled",
+                    input_message_id=event.message_id,
+                    content=text,
+                    skill_name=skill_name,
+                )
+                await repo.mark_message(message_log, "handled", f"skill_disabled:{skill_name}")
+                return RouteOutcome(
+                    status="handled",
+                    reason="skill_disabled",
+                    replied=True,
+                    reply_text=text,
+                    skill_name=skill_name,
+                )
+            recent_context = await self.rate_limiter.get_context(context_key)
+            result = await self.skills.dispatch(
+                name,
+                args,
+                SkillContext(
+                    repo=repo,
+                    llm=self.llm,
+                    group_id="",
+                    user_id=event.user_id,
+                    message_id=event.message_id,
+                    command_prefix=bot_settings.command_prefix,
+                    recent_context=recent_context,
+                    enabled_skills=enabled_skills,
+                    sender=sender,
+                ),
+            )
+            if not await self._send_private_reply(event, message_log, repo, sender, result.text):
+                return RouteOutcome(status="error", reason="send_failed")
+            await repo.save_reply(
+                group_id="",
+                user_id=event.user_id,
+                trigger_type="private_command",
+                input_message_id=event.message_id,
+                content=result.text,
+                skill_name=result.skill_name,
+                llm_model=result.llm_model,
+            )
+            await repo.mark_message(message_log, "handled", f"private_command:{name}")
+            return RouteOutcome(
+                status="handled",
+                replied=True,
+                reply_text=result.text,
+                skill_name=result.skill_name,
+            )
+
+        if "ai" not in enabled_skills:
+            await repo.mark_message(message_log, "observed", "private_ai_disabled")
+            return RouteOutcome(status="observed", reason="private_ai_disabled")
+
+        context = await self.rate_limiter.get_context(context_key)
+        prompt_with_context = self._with_context(event.text, context)
+        llm_result = await self.llm.chat(
+            repo,
+            prompt_with_context,
+            group_id="",
+            user_id=event.user_id,
+            skill_name="private_chat",
+        )
+        if not await self._send_private_reply(event, message_log, repo, sender, llm_result.text):
+            return RouteOutcome(status="error", reason="send_failed")
+        await repo.save_reply(
+            group_id="",
+            user_id=event.user_id,
+            trigger_type="private_chat",
+            input_message_id=event.message_id,
+            content=llm_result.text,
+            skill_name="ai",
+            llm_model=llm_result.model,
+        )
+        await repo.mark_message(message_log, "handled", "private_chat")
+        return RouteOutcome(
+            status="handled",
+            replied=True,
+            reply_text=llm_result.text,
+            skill_name="ai",
+        )
+
     async def handle_group_notice(
         self,
         event: GroupNoticeEvent,
@@ -391,6 +549,21 @@ class MessageRouter:
             return False
         return True
 
+    async def _send_private_reply(
+        self,
+        event: BotEvent,
+        message_log: Any,
+        repo: Repository,
+        sender: Any,
+        text: str,
+    ) -> bool:
+        try:
+            await sender.send_private_message(event.user_id, text)
+        except Exception as exc:
+            await repo.mark_message(message_log, "error", f"send_failed:{type(exc).__name__}")
+            return False
+        return True
+
     def _parse_command(self, text: str, prefix: str | None = None) -> tuple[str, str] | None:
         command_prefix = prefix or self.settings.command_prefix
         if not text.startswith(command_prefix):
@@ -433,7 +606,7 @@ class MessageRouter:
     def _with_context(prompt: str, context: list[str]) -> str:
         if not context:
             return prompt
-        return "最近群聊上下文：\n" + "\n".join(context[-10:]) + f"\n\n当前问题：{prompt}"
+        return "最近上下文：\n" + "\n".join(context[-10:]) + f"\n\n当前问题：{prompt}"
 
     @staticmethod
     def _remove_bot_mentions(text: str, bot_qq: str, bot_nicknames: list[str]) -> str:

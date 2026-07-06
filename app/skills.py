@@ -5,21 +5,114 @@ import random
 import re
 from dataclasses import dataclass
 from datetime import timedelta
+from typing import Any
 
 from app.llm import LLMService
 from app.models import now_utc
 from app.repository import Repository
 
 
-SKILL_CATALOG: dict[str, dict[str, str]] = {
-    "help": {"display_name": "帮助", "description": "查看机器人可用命令。"},
-    "ping": {"display_name": "健康检查", "description": "检查机器人是否在线。"},
-    "ai": {"display_name": "AI 问答", "description": "大模型聊天、@ 回复和主动回答。"},
-    "kb": {"display_name": "知识库", "description": "查询后台维护的群知识库。"},
-    "dice": {"display_name": "掷骰子", "description": "娱乐掷骰子命令。"},
-    "guess": {"display_name": "猜数字", "description": "按群持久保存的猜数字游戏。"},
-    "memory": {"display_name": "长期记忆", "description": "手动记住和忘记待审核记忆。"},
-    "admin-lite": {"display_name": "基础群管", "description": "警告、关键词拦截和轻量群管命令。"},
+SKILL_CATALOG: dict[str, dict[str, Any]] = {
+    "help": {
+        "display_name": "帮助",
+        "description": "查看机器人可用命令。",
+        "category": "基础",
+        "commands": ["help"],
+        "risk_level": "low",
+        "requires_admin": False,
+        "uses_llm": False,
+        "uses_knowledge": False,
+        "uses_memory": False,
+        "private_supported": True,
+    },
+    "ping": {
+        "display_name": "健康检查",
+        "description": "检查机器人是否在线。",
+        "category": "基础",
+        "commands": ["ping"],
+        "risk_level": "low",
+        "requires_admin": False,
+        "uses_llm": False,
+        "uses_knowledge": False,
+        "uses_memory": False,
+        "private_supported": True,
+    },
+    "ai": {
+        "display_name": "AI 问答",
+        "description": "大模型聊天、@ 回复和主动回答。",
+        "category": "AI",
+        "commands": ["ai"],
+        "risk_level": "medium",
+        "requires_admin": False,
+        "uses_llm": True,
+        "uses_knowledge": False,
+        "uses_memory": True,
+        "private_supported": True,
+    },
+    "kb": {
+        "display_name": "知识库",
+        "description": "查询后台维护的群知识库。",
+        "category": "AI",
+        "commands": ["kb"],
+        "risk_level": "medium",
+        "requires_admin": False,
+        "uses_llm": True,
+        "uses_knowledge": True,
+        "uses_memory": False,
+        "private_supported": True,
+    },
+    "dice": {
+        "display_name": "掷骰子",
+        "description": "娱乐掷骰子命令。",
+        "category": "娱乐",
+        "commands": ["dice"],
+        "risk_level": "low",
+        "requires_admin": False,
+        "uses_llm": False,
+        "uses_knowledge": False,
+        "uses_memory": False,
+        "private_supported": True,
+    },
+    "guess": {
+        "display_name": "猜数字",
+        "description": "按群持久保存的猜数字游戏。",
+        "category": "娱乐",
+        "commands": ["guess"],
+        "risk_level": "low",
+        "requires_admin": False,
+        "uses_llm": False,
+        "uses_knowledge": False,
+        "uses_memory": False,
+        "private_supported": False,
+    },
+    "memory": {
+        "display_name": "长期记忆",
+        "description": "手动记住和忘记待审核记忆。",
+        "category": "记忆",
+        "commands": ["remember", "forget"],
+        "risk_level": "medium",
+        "requires_admin": False,
+        "uses_llm": False,
+        "uses_knowledge": False,
+        "uses_memory": True,
+        "private_supported": True,
+    },
+    "admin-lite": {
+        "display_name": "基础群管",
+        "description": "警告、关键词拦截和轻量群管命令。",
+        "category": "群管",
+        "commands": ["warn", "banword", "mute", "unmute"],
+        "risk_level": "high",
+        "requires_admin": True,
+        "uses_llm": False,
+        "uses_knowledge": False,
+        "uses_memory": False,
+        "private_supported": False,
+    },
+}
+
+PRIVATE_SUPPORTED_SKILLS = {
+    name for name, item in SKILL_CATALOG.items() if item.get("private_supported")
 }
 
 COMMAND_SKILLS: dict[str, str] = {

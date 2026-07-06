@@ -1,7 +1,13 @@
 from __future__ import annotations
 
 from app.config import Settings
-from app.events import extract_text, normalize_group_message, normalize_group_notice, remove_bot_mentions
+from app.events import (
+    extract_text,
+    normalize_group_message,
+    normalize_group_notice,
+    normalize_private_message,
+    remove_bot_mentions,
+)
 
 
 def group_event(message, *, message_id: int = 1):
@@ -39,6 +45,17 @@ def group_event_without_message_id(message, *, message_seq: int = 1):
         "user_id": 20001,
         "message": message,
         "sender": {"nickname": "tester"},
+    }
+
+
+def private_event(message, *, message_id: int = 1):
+    return {
+        "post_type": "message",
+        "message_type": "private",
+        "message_id": message_id,
+        "user_id": 20001,
+        "message": message,
+        "sender": {"nickname": "private-tester"},
     }
 
 
@@ -140,3 +157,15 @@ def test_normalize_group_increase_notice():
     assert event.group_id == "10001"
     assert event.user_id == "20002"
     assert event.operator_id == "30003"
+
+
+def test_normalize_private_message():
+    settings = Settings(DATABASE_URL="sqlite+aiosqlite:///:memory:", REDIS_URL="")
+    event = normalize_private_message(private_event("/ping"), settings)
+
+    assert event is not None
+    assert event.message_type == "private"
+    assert event.group_id == ""
+    assert event.user_id == "20001"
+    assert event.text == "/ping"
+    assert event.dedup_key.startswith("private:")

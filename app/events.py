@@ -18,6 +18,7 @@ class BotEvent:
     raw: dict[str, Any]
     at_bot: bool
     dedup_key: str
+    message_type: str = "group"
     nickname: str = ""
 
 
@@ -104,7 +105,34 @@ def normalize_group_message(raw: dict[str, Any], settings: Settings) -> BotEvent
         raw=raw,
         at_bot=is_at_bot(raw, text, settings),
         dedup_key=dedup_key,
+        message_type="group",
         nickname=str(sender.get("nickname") or sender.get("card") or ""),
+    )
+
+
+def normalize_private_message(raw: dict[str, Any], settings: Settings) -> BotEvent | None:
+    if raw.get("post_type") != "message" or raw.get("message_type") != "private":
+        return None
+    user_id = str(raw.get("user_id") or "")
+    self_id = _raw_value(raw, "self_id")
+    message_id = _raw_value(raw, "message_id", "message_seq", "real_id", "time")
+    text = extract_text(raw.get("message")).strip()
+    if not user_id or not text:
+        return None
+    sender = raw.get("sender") or {}
+    text_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+    dedup_key = f"private:{message_id}:{user_id}:{text_hash}"
+    return BotEvent(
+        message_id=message_id,
+        group_id="",
+        user_id=user_id,
+        self_id=self_id,
+        text=text,
+        raw=raw,
+        at_bot=True,
+        dedup_key=dedup_key,
+        message_type="private",
+        nickname=str(sender.get("nickname") or ""),
     )
 
 

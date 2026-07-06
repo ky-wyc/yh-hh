@@ -5,7 +5,7 @@ import json
 import httpx
 
 from app.cache import MemoryRateLimiter
-from app.events import normalize_group_message, normalize_group_notice
+from app.events import normalize_group_message, normalize_group_notice, normalize_private_message
 from app.llm import LLMService
 from app.models import User
 from app.repository import Repository
@@ -60,6 +60,17 @@ def group_event_with_self_id(
     }
 
 
+def private_event(text: str, *, user_id: str = "20001", message_id: int = 1):
+    return {
+        "post_type": "message",
+        "message_type": "private",
+        "message_id": message_id,
+        "user_id": int(user_id),
+        "message": text,
+        "sender": {"nickname": "private-tester"},
+    }
+
+
 async def test_ping_replies_without_llm(settings, repo, message_router, sender):
     event = normalize_group_message(group_event("/ping"), settings)
 
@@ -68,6 +79,50 @@ async def test_ping_replies_without_llm(settings, repo, message_router, sender):
     assert outcome.replied is True
     assert sender.group_messages == [("10001", "pong")]
     assert outcome.skill_name == "ping"
+
+
+async def test_private_message_requires_enabled_whitelist(settings, repo, message_router, sender):
+    event = normalize_private_message(private_event("/ping"), settings)
+
+    outcome = await message_router.handle(event, repo, sender)
+
+    assert outcome.replied is False
+    assert outcome.reason == "private_chat_disabled"
+    assert sender.private_messages == []
+
+
+async def test_private_message_rejects_non_whitelisted_user(settings, repo, message_router, sender):
+    await repo.update_bot_settings({"private_chat_enabled": True, "private_chat_whitelist": "30001"})
+    event = normalize_private_message(private_event("/ping"), settings)
+
+    outcome = await message_router.handle(event, repo, sender)
+
+    assert outcome.replied is False
+    assert outcome.reason == "private_user_not_allowed"
+    assert sender.private_messages == []
+
+
+async def test_private_command_replies_to_whitelisted_user(settings, repo, message_router, sender):
+    await repo.update_bot_settings({"private_chat_enabled": True, "private_chat_whitelist": "20001"})
+    event = normalize_private_message(private_event("/ping"), settings)
+
+    outcome = await message_router.handle(event, repo, sender)
+
+    assert outcome.replied is True
+    assert outcome.skill_name == "ping"
+    assert sender.private_messages == [("20001", "pong")]
+    assert sender.group_messages == []
+
+
+async def test_private_unsupported_skill_is_rejected(settings, repo, message_router, sender):
+    await repo.update_bot_settings({"private_chat_enabled": True, "private_chat_whitelist": "20001"})
+    event = normalize_private_message(private_event("/guess start"), settings)
+
+    outcome = await message_router.handle(event, repo, sender)
+
+    assert outcome.replied is True
+    assert outcome.reason == "private_skill_unsupported"
+    assert sender.private_messages == [("20001", "该功能不支持私聊：guess")]
 
 
 async def test_group_whitelist_drops_message(settings, repo, message_router, sender):

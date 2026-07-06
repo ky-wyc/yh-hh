@@ -85,6 +85,14 @@ class SkillSettingOut(BaseModel):
     skill_name: str
     display_name: str
     description: str
+    category: str
+    commands: list[str]
+    risk_level: str
+    requires_admin: bool
+    uses_llm: bool
+    uses_knowledge: bool
+    uses_memory: bool
+    private_supported: bool
     global_enabled: bool
     group_enabled: bool | None = None
     effective_enabled: bool
@@ -625,6 +633,8 @@ class BotSettingsOut(BaseModel):
     bot_nicknames: str
     admin_qq_ids: str
     allowed_groups: str
+    private_chat_enabled: bool
+    private_chat_whitelist: str
     rate_limit_per_user_per_minute: int
     rate_limit_per_group_per_minute: int
 
@@ -637,6 +647,8 @@ class BotSettingsUpdate(BaseModel):
     bot_nicknames: str | None = None
     admin_qq_ids: str | None = None
     allowed_groups: str | None = None
+    private_chat_enabled: bool | None = None
+    private_chat_whitelist: str | None = None
     rate_limit_per_user_per_minute: int | None = Field(default=None, ge=1, le=600)
     rate_limit_per_group_per_minute: int | None = Field(default=None, ge=1, le=3000)
 
@@ -670,7 +682,7 @@ class BotSettingsUpdate(BaseModel):
             raise ValueError("bot_qq must be numeric")
         return stripped
 
-    @field_validator("admin_qq_ids", "allowed_groups")
+    @field_validator("admin_qq_ids", "allowed_groups", "private_chat_whitelist")
     @classmethod
     def validate_numeric_csv(cls, value: str | None) -> str | None:
         if value is None:

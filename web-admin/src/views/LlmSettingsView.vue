@@ -153,6 +153,13 @@
       <el-form-item label="群白名单">
         <el-input v-model="botForm.allowed_groups" placeholder="多个群号用英文逗号分隔；留空则不限制" />
       </el-form-item>
+      <el-form-item label="启用私聊">
+        <el-switch v-model="botForm.private_chat_enabled" />
+        <span class="field-hint">开启后仍只响应白名单 QQ。</span>
+      </el-form-item>
+      <el-form-item label="私聊白名单">
+        <el-input v-model="botForm.private_chat_whitelist" placeholder="多个 QQ 用英文逗号分隔；留空则不响应私聊" />
+      </el-form-item>
       <el-form-item label="默认启用新群">
         <el-switch v-model="botForm.default_group_enabled" />
       </el-form-item>

@@ -8,6 +8,7 @@ import LlmSettingsView from './views/LlmSettingsView.vue'
 import LogsView from './views/LogsView.vue'
 import MemoriesView from './views/MemoriesView.vue'
 import ScheduledTasksView from './views/ScheduledTasksView.vue'
+import SkillsView from './views/SkillsView.vue'
 import { hasToken } from './auth'
 
 export const router = createRouter({
@@ -16,6 +17,7 @@ export const router = createRouter({
     { path: '/login', component: LoginView },
     { path: '/', component: DashboardView, meta: { requiresAuth: true } },
     { path: '/groups', component: GroupsView, meta: { requiresAuth: true } },
+    { path: '/skills', component: SkillsView, meta: { requiresAuth: true } },
     { path: '/keywords', component: KeywordRulesView, meta: { requiresAuth: true } },
     { path: '/knowledge', component: KnowledgeView, meta: { requiresAuth: true } },
     { path: '/memories', component: MemoriesView, meta: { requiresAuth: true } },

@@ -136,6 +136,10 @@ def inspect_env(path: Path) -> tuple[list[str], list[str]]:
     if admin_qq_ids and not all(part.strip().isdigit() for part in admin_qq_ids.split(",")):
         errors.append("ADMIN_QQ_IDS must be comma-separated numeric QQ ids")
 
+    private_chat_whitelist = str(values.get("PRIVATE_CHAT_WHITELIST") or "").strip()
+    if private_chat_whitelist and not all(part.strip().isdigit() for part in private_chat_whitelist.split(",")):
+        errors.append("PRIVATE_CHAT_WHITELIST must be comma-separated numeric QQ ids")
+
     reply_mode = str(values.get("DEFAULT_REPLY_MODE") or "").strip()
     if reply_mode and reply_mode not in REPLY_MODES:
         errors.append("DEFAULT_REPLY_MODE must be one of: active, command_only, disabled, mention_only")

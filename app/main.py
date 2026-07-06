@@ -13,7 +13,7 @@ from app.cache import create_rate_limiter
 from app.config import Settings, get_settings
 from app.db import create_engine, create_session_factory, init_db
 from app.embedding import EmbeddingService
-from app.events import normalize_group_message, normalize_group_notice
+from app.events import normalize_group_message, normalize_group_notice, normalize_private_message
 from app.llm import LLMService
 from app.onebot import OneBotConnectionManager, websocket_event_stream
 from app.repository import Repository
@@ -84,6 +84,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             async for payload in websocket_event_stream(websocket):
                 app.state.onebot.record_event()
                 event = normalize_group_message(payload, settings)
+                if event is None:
+                    event = normalize_private_message(payload, settings)
                 notice = normalize_group_notice(payload)
                 if event is None:
                     if notice is None:

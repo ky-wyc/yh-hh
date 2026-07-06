@@ -85,6 +85,14 @@ def test_preflight_rejects_invalid_admin_qq_ids(tmp_path):
     assert "ADMIN_QQ_IDS must be comma-separated numeric QQ ids" in errors
 
 
+def test_preflight_rejects_invalid_private_chat_whitelist(tmp_path):
+    env_path = write_env(tmp_path / ".env", PRIVATE_CHAT_WHITELIST="123456,not-a-number")
+
+    errors, warnings = inspect_env(env_path)
+
+    assert "PRIVATE_CHAT_WHITELIST must be comma-separated numeric QQ ids" in errors
+
+
 def test_preflight_rejects_database_url_password_mismatch(tmp_path):
     env_path = write_env(
         tmp_path / ".env",

@@ -377,6 +377,8 @@ def test_bot_settings_can_update_runtime_operation_fields(tmp_path):
                 "bot_nicknames": "小Q,助手",
                 "admin_qq_ids": "20001, 20002",
                 "allowed_groups": "10001, 10002",
+                "private_chat_enabled": True,
+                "private_chat_whitelist": "20001, 20003",
                 "rate_limit_per_user_per_minute": 20,
                 "rate_limit_per_group_per_minute": 120,
             },
@@ -389,6 +391,8 @@ def test_bot_settings_can_update_runtime_operation_fields(tmp_path):
         assert payload["bot_nicknames"] == "小Q,助手"
         assert payload["admin_qq_ids"] == "20001,20002"
         assert payload["allowed_groups"] == "10001,10002"
+        assert payload["private_chat_enabled"] is True
+        assert payload["private_chat_whitelist"] == "20001,20003"
         assert payload["rate_limit_per_user_per_minute"] == 20
         assert payload["rate_limit_per_group_per_minute"] == 120
 
@@ -423,6 +427,11 @@ def test_bot_settings_reject_invalid_values(tmp_path):
             json={"admin_qq_ids": "abc"},
             headers=headers,
         )
+        invalid_private_whitelist = client.patch(
+            "/api/settings/bot",
+            json={"private_chat_whitelist": "abc"},
+            headers=headers,
+        )
         invalid_rate_limit = client.patch(
             "/api/settings/bot",
             json={"rate_limit_per_user_per_minute": 0},
@@ -432,6 +441,7 @@ def test_bot_settings_reject_invalid_values(tmp_path):
         assert invalid_mode.status_code == 422
         assert invalid_prefix.status_code == 422
         assert invalid_admin_ids.status_code == 422
+        assert invalid_private_whitelist.status_code == 422
         assert invalid_rate_limit.status_code == 422
 
 
@@ -1095,6 +1105,10 @@ def test_skill_settings_and_group_detail_can_be_managed_from_admin(tmp_path):
         skill_map = {item["skill_name"]: item for item in skills.json()}
         assert skill_map["ai"]["global_enabled"] is False
         assert skill_map["ai"]["effective_enabled"] is False
+        assert skill_map["ai"]["category"] == "AI"
+        assert skill_map["ai"]["commands"] == ["ai"]
+        assert skill_map["ai"]["uses_llm"] is True
+        assert skill_map["ai"]["private_supported"] is True
         assert skill_map["dice"]["group_enabled"] is False
         assert skill_map["dice"]["effective_enabled"] is False
         assert detail.status_code == 200

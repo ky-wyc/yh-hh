@@ -52,6 +52,8 @@ class BotConfig:
     bot_nicknames: str
     admin_qq_ids: str
     allowed_groups: str
+    private_chat_enabled: bool
+    private_chat_whitelist: str
     rate_limit_per_user_per_minute: int
     rate_limit_per_group_per_minute: int
 
@@ -66,6 +68,10 @@ class BotConfig:
     @property
     def allowed_group_set(self) -> set[str]:
         return set(parse_csv(self.allowed_groups))
+
+    @property
+    def private_chat_whitelist_set(self) -> set[str]:
+        return set(parse_csv(self.private_chat_whitelist))
 
 
 @dataclass(slots=True)
@@ -222,6 +228,7 @@ class Repository:
         dedup_key: str,
         content: str,
         raw_event: dict[str, Any],
+        message_type: str = "group",
         status: str = "received",
         drop_reason: str = "",
     ) -> tuple[MessageLog | None, bool]:
@@ -234,6 +241,7 @@ class Repository:
             user_id=user_id,
             message_id=message_id,
             dedup_key=dedup_key,
+            message_type=message_type,
             content=content,
             raw_event_json=json.dumps(raw_event, ensure_ascii=False),
             status=status,
@@ -361,6 +369,7 @@ class Repository:
             return default if stored is None else stored
 
         default_group_enabled = await val("default_group_enabled", str(self.settings.default_group_enabled))
+        private_chat_enabled = await val("private_chat_enabled", str(self.settings.private_chat_enabled))
         return BotConfig(
             default_group_enabled=(
                 default_group_enabled.lower() == "true"
@@ -371,6 +380,8 @@ class Repository:
             bot_nicknames=await val("bot_nicknames", self.settings.bot_nicknames_raw),
             admin_qq_ids=await val("admin_qq_ids", self.settings.admin_qq_ids_raw),
             allowed_groups=await val("allowed_groups", self.settings.allowed_groups_raw),
+            private_chat_enabled=private_chat_enabled.lower() == "true",
+            private_chat_whitelist=await val("private_chat_whitelist", self.settings.private_chat_whitelist_raw),
             rate_limit_per_user_per_minute=int(
                 await val("rate_limit_per_user_per_minute", str(self.settings.rate_limit_per_user_per_minute))
             ),
@@ -388,6 +399,8 @@ class Repository:
             "bot_nicknames": "bot_nicknames",
             "admin_qq_ids": "admin_qq_ids",
             "allowed_groups": "allowed_groups",
+            "private_chat_enabled": "private_chat_enabled",
+            "private_chat_whitelist": "private_chat_whitelist",
             "rate_limit_per_user_per_minute": "rate_limit_per_user_per_minute",
             "rate_limit_per_group_per_minute": "rate_limit_per_group_per_minute",
         }

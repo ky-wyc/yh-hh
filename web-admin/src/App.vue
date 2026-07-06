@@ -6,6 +6,7 @@
       <el-menu router :default-active="$route.path" background-color="#0f172a" text-color="#cbd5e1" active-text-color="#fff">
         <el-menu-item index="/">仪表盘</el-menu-item>
         <el-menu-item index="/groups">群管理</el-menu-item>
+        <el-menu-item index="/skills">功能管理</el-menu-item>
         <el-menu-item index="/keywords">关键词规则</el-menu-item>
         <el-menu-item index="/knowledge">知识库</el-menu-item>
         <el-menu-item index="/memories">长期记忆</el-menu-item>

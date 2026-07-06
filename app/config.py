@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     allowed_groups_raw: str = Field(default="", alias="ALLOWED_GROUPS")
     default_group_enabled: bool = Field(default=True, alias="DEFAULT_GROUP_ENABLED")
     default_reply_mode: str = Field(default="mention_only", alias="DEFAULT_REPLY_MODE")
+    private_chat_enabled: bool = Field(default=False, alias="PRIVATE_CHAT_ENABLED")
+    private_chat_whitelist_raw: str = Field(default="", alias="PRIVATE_CHAT_WHITELIST")
 
     llm_provider: str = Field(default="openai_compatible", alias="LLM_PROVIDER")
     llm_endpoint_type: str = Field(default="chat_completions", alias="LLM_ENDPOINT_TYPE")
@@ -66,6 +68,10 @@ class Settings(BaseSettings):
     @property
     def allowed_groups(self) -> set[str]:
         return set(parse_csv(self.allowed_groups_raw))
+
+    @property
+    def private_chat_whitelist(self) -> set[str]:
+        return set(parse_csv(self.private_chat_whitelist_raw))
 
 
 @lru_cache
