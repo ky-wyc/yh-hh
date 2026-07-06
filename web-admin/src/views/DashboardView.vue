@@ -24,13 +24,23 @@
       <el-card>
         <template #header>OneBot 状态</template>
         <el-descriptions :column="1" border>
-          <el-descriptions-item label="连接">{{ onebot.online ? '在线' : '离线' }}</el-descriptions-item>
+          <el-descriptions-item label="连接">
+            <el-tag :type="onebot.online ? 'success' : 'danger'">
+              {{ onebot.online ? '在线' : '离线' }}
+            </el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="活动">{{ activityText }}</el-descriptions-item>
           <el-descriptions-item label="模式">{{ onebot.connection_mode ?? '-' }}</el-descriptions-item>
           <el-descriptions-item label="连接时间">{{ onebot.connected_at ?? '-' }}</el-descriptions-item>
+          <el-descriptions-item label="在线时长">{{ formatDuration(onebot.connected_seconds) }}</el-descriptions-item>
           <el-descriptions-item label="断开时间">{{ onebot.disconnected_at ?? '-' }}</el-descriptions-item>
+          <el-descriptions-item label="离线时长">{{ formatDuration(onebot.offline_seconds) }}</el-descriptions-item>
           <el-descriptions-item label="最近事件">{{ onebot.last_event_at ?? '-' }}</el-descriptions-item>
+          <el-descriptions-item label="事件距今">{{ formatDuration(onebot.last_event_age_seconds) }}</el-descriptions-item>
           <el-descriptions-item label="最近动作">{{ onebot.last_action_at ?? '-' }}</el-descriptions-item>
+          <el-descriptions-item label="动作距今">{{ formatDuration(onebot.last_action_age_seconds) }}</el-descriptions-item>
           <el-descriptions-item label="最近错误">{{ onebot.last_error || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="恢复提示">{{ onebot.recovery_hint || '-' }}</el-descriptions-item>
         </el-descriptions>
       </el-card>
     </el-col>
@@ -56,6 +66,29 @@ const cacheStatus = computed(() => {
   if (typeof cache === 'string') return cache
   return `${cache.backend ?? '-'} / ${cache.status ?? '-'}`
 })
+const activityText = computed(() => {
+  const labels: Record<string, string> = {
+    active: '有收发记录',
+    waiting_for_event: '等待入站事件',
+    waiting_for_action: '等待出站动作',
+    offline: '离线'
+  }
+  const state = String(onebot.value.activity_state || '')
+  return labels[state] || state || '-'
+})
+
+function formatDuration(value: unknown) {
+  if (value === null || value === undefined || value === '') return '-'
+  const seconds = Number(value)
+  if (!Number.isFinite(seconds)) return '-'
+  if (seconds < 60) return `${Math.max(0, Math.floor(seconds))} 秒`
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes} 分 ${Math.floor(seconds % 60)} 秒`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours} 小时 ${minutes % 60} 分`
+  const days = Math.floor(hours / 24)
+  return `${days} 天 ${hours % 24} 小时`
+}
 
 onMounted(async () => {
   const [{ data: overviewData }, { data: readyData }, { data: onebotData }] = await Promise.all([

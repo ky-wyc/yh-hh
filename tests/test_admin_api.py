@@ -1018,6 +1018,37 @@ def test_onebot_status_exposes_last_event_and_action_times(tmp_path):
         payload = status.json()
         assert payload["last_event_at"]
         assert payload["last_action_at"]
+        assert payload["connection_state"] == "online"
+        assert payload["activity_state"] == "active"
+        assert isinstance(payload["connected_seconds"], int)
+        assert isinstance(payload["last_event_age_seconds"], int)
+        assert isinstance(payload["last_action_age_seconds"], int)
+
+
+def test_onebot_status_exposes_offline_recovery_hint(tmp_path):
+    settings = Settings(
+        DATABASE_URL=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",
+        REDIS_URL="",
+        ADMIN_USERNAME="admin",
+        ADMIN_PASSWORD="secret",
+    )
+    app = create_app(settings)
+
+    with TestClient(app) as client:
+        token = client.post(
+            "/api/auth/login", json={"username": "admin", "password": "secret"}
+        ).json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        response = client.get("/api/system/onebot-status", headers=headers)
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["online"] is False
+        assert payload["connection_state"] == "offline"
+        assert payload["activity_state"] == "offline"
+        assert payload["offline_seconds"] is None
+        assert "NapCat" in payload["recovery_hint"]
 
 
 def test_onebot_reverse_ws_accepts_access_token_query(tmp_path):

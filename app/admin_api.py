@@ -181,6 +181,50 @@ def task_run_out(run) -> TaskRunOut:
     )
 
 
+def onebot_status_out(status) -> dict[str, object]:
+    now = datetime.now(UTC)
+
+    def iso(value: datetime | None) -> str | None:
+        return value.isoformat() if value else None
+
+    def age_seconds(value: datetime | None) -> int | None:
+        if value is None:
+            return None
+        return max(0, int((now - value).total_seconds()))
+
+    connected_seconds = age_seconds(status.connected_at) if status.online else None
+    offline_seconds = age_seconds(status.disconnected_at) if not status.online else None
+    if not status.online:
+        activity_state = "offline"
+        recovery_hint = "检查 onebot 容器、NapCat 登录态和反向 WebSocket 配置。"
+    elif not status.last_event_at:
+        activity_state = "waiting_for_event"
+        recovery_hint = "OneBot 已连接，向目标群发送 /ping 验证入站事件。"
+    elif not status.last_action_at:
+        activity_state = "waiting_for_action"
+        recovery_hint = "已收到事件但未记录出站动作，检查群开关、回复模式和后台错误。"
+    else:
+        activity_state = "active"
+        recovery_hint = ""
+
+    return {
+        "online": status.online,
+        "connection_state": "online" if status.online else "offline",
+        "activity_state": activity_state,
+        "connection_mode": status.connection_mode,
+        "connected_at": iso(status.connected_at),
+        "disconnected_at": iso(status.disconnected_at),
+        "last_event_at": iso(status.last_event_at),
+        "last_action_at": iso(status.last_action_at),
+        "connected_seconds": connected_seconds,
+        "offline_seconds": offline_seconds,
+        "last_event_age_seconds": age_seconds(status.last_event_at),
+        "last_action_age_seconds": age_seconds(status.last_action_at),
+        "last_error": status.last_error,
+        "recovery_hint": recovery_hint,
+    }
+
+
 def audit_safe_detail(value):
     if isinstance(value, datetime):
         return value.isoformat()
@@ -254,16 +298,7 @@ async def ready(request: Request, session: AsyncSession = Depends(get_session)):
 
 @router.get("/system/onebot-status", dependencies=[Depends(require_admin)])
 async def onebot_status(request: Request):
-    status = request.app.state.onebot.status
-    return {
-        "online": status.online,
-        "connection_mode": status.connection_mode,
-        "connected_at": status.connected_at.isoformat() if status.connected_at else None,
-        "disconnected_at": status.disconnected_at.isoformat() if status.disconnected_at else None,
-        "last_event_at": status.last_event_at.isoformat() if status.last_event_at else None,
-        "last_action_at": status.last_action_at.isoformat() if status.last_action_at else None,
-        "last_error": status.last_error,
-    }
+    return onebot_status_out(request.app.state.onebot.status)
 
 
 @router.get("/dashboard/overview", dependencies=[Depends(require_admin)])
