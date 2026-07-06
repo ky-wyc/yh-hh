@@ -348,6 +348,57 @@ def test_keyword_rules_reject_invalid_payloads(tmp_path):
         assert empty_keyword.status_code == 422
 
 
+def test_memories_can_be_managed_from_admin(tmp_path):
+    settings = Settings(
+        DATABASE_URL=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",
+        REDIS_URL="",
+        ADMIN_USERNAME="admin",
+        ADMIN_PASSWORD="secret",
+    )
+    app = create_app(settings)
+
+    with TestClient(app) as client:
+        token = client.post(
+            "/api/auth/login", json={"username": "admin", "password": "secret"}
+        ).json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        created = client.post(
+            "/api/memories",
+            json={
+                "group_id": "10001",
+                "user_id": "20001",
+                "content": "用户喜欢简短回答",
+                "source": "admin",
+                "confidence": 0.9,
+                "status": "approved",
+            },
+            headers=headers,
+        )
+        assert created.status_code == 200
+        memory = created.json()
+        assert memory["content"] == "用户喜欢简短回答"
+        assert memory["status"] == "approved"
+
+        patched = client.patch(
+            f"/api/memories/{memory['id']}",
+            json={"content": "用户喜欢直接、简短的回答", "status": "pending"},
+            headers=headers,
+        )
+        assert patched.status_code == 200
+        assert patched.json()["content"] == "用户喜欢直接、简短的回答"
+        assert patched.json()["status"] == "pending"
+
+        listed = client.get("/api/memories?status=pending", headers=headers)
+        assert listed.status_code == 200
+        assert listed.json()[0]["id"] == memory["id"]
+
+        deleted = client.delete(f"/api/memories/{memory['id']}", headers=headers)
+        assert deleted.status_code == 200
+        assert deleted.json()["deleted"] is True
+        assert client.get("/api/memories?status=deleted", headers=headers).json()[0]["id"] == memory["id"]
+
+
 def test_group_update_rejects_invalid_reply_mode(tmp_path):
     settings = Settings(
         DATABASE_URL=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",

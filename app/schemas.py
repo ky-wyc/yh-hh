@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field, field_validator
 
 
 REPLY_MODES = {"disabled", "command_only", "mention_only", "active"}
+MEMORY_STATUSES = {"pending", "approved", "rejected", "deleted"}
 
 
 class LoginRequest(BaseModel):
@@ -115,6 +116,113 @@ class KeywordRuleUpdate(BaseModel):
         if len(stripped) > 2000:
             raise ValueError("response must be 2000 characters or fewer")
         return stripped
+
+
+class MemoryOut(BaseModel):
+    id: int
+    group_id: str
+    user_id: str
+    content: str
+    source: str
+    confidence: float
+    status: str
+    created_by: str
+    created_at: str
+    updated_at: str
+
+
+class MemoryCreate(BaseModel):
+    group_id: str = ""
+    user_id: str = ""
+    content: str
+    source: str = "admin"
+    confidence: float = Field(default=0.8, ge=0, le=1)
+    status: str = "approved"
+
+    @field_validator("group_id", "user_id")
+    @classmethod
+    def validate_optional_numeric_id(cls, value: str) -> str:
+        stripped = value.strip()
+        if stripped and not stripped.isdigit():
+            raise ValueError("value must be numeric or empty")
+        return stripped
+
+    @field_validator("content")
+    @classmethod
+    def validate_content(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("content must not be empty")
+        if len(stripped) > 2000:
+            raise ValueError("content must be 2000 characters or fewer")
+        return stripped
+
+    @field_validator("source")
+    @classmethod
+    def validate_source(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("source must not be empty")
+        if len(stripped) > 64:
+            raise ValueError("source must be 64 characters or fewer")
+        return stripped
+
+    @field_validator("status")
+    @classmethod
+    def validate_status(cls, value: str) -> str:
+        if value not in MEMORY_STATUSES:
+            raise ValueError(f"status must be one of: {', '.join(sorted(MEMORY_STATUSES))}")
+        return value
+
+
+class MemoryUpdate(BaseModel):
+    group_id: str | None = None
+    user_id: str | None = None
+    content: str | None = None
+    source: str | None = None
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    status: str | None = None
+
+    @field_validator("group_id", "user_id")
+    @classmethod
+    def validate_optional_numeric_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        stripped = value.strip()
+        if stripped and not stripped.isdigit():
+            raise ValueError("value must be numeric or empty")
+        return stripped
+
+    @field_validator("content")
+    @classmethod
+    def validate_content(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("content must not be empty")
+        if len(stripped) > 2000:
+            raise ValueError("content must be 2000 characters or fewer")
+        return stripped
+
+    @field_validator("source")
+    @classmethod
+    def validate_source(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("source must not be empty")
+        if len(stripped) > 64:
+            raise ValueError("source must be 64 characters or fewer")
+        return stripped
+
+    @field_validator("status")
+    @classmethod
+    def validate_status(cls, value: str | None) -> str | None:
+        if value is not None and value not in MEMORY_STATUSES:
+            raise ValueError(f"status must be one of: {', '.join(sorted(MEMORY_STATUSES))}")
+        return value
 
 
 class BotSettingsOut(BaseModel):

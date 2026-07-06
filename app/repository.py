@@ -4,11 +4,21 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, parse_csv
-from app.models import AuditLog, BotReply, Group, KeywordRule, LLMUsageLog, MessageLog, Setting, User
+from app.models import (
+    AuditLog,
+    BotReply,
+    Group,
+    KeywordRule,
+    LLMUsageLog,
+    MemoryRecord,
+    MessageLog,
+    Setting,
+    User,
+)
 
 
 @dataclass(slots=True)
@@ -362,6 +372,81 @@ class Repository:
             if rule.keyword and rule.keyword in content:
                 return rule
         return None
+
+    async def create_memory(
+        self,
+        *,
+        content: str,
+        group_id: str = "",
+        user_id: str = "",
+        source: str = "admin",
+        confidence: float = 0.8,
+        status: str = "pending",
+        created_by: str = "",
+    ) -> MemoryRecord:
+        memory = MemoryRecord(
+            group_id=group_id,
+            user_id=user_id,
+            content=content,
+            source=source,
+            confidence=confidence,
+            status=status,
+            created_by=created_by,
+        )
+        self.session.add(memory)
+        await self.session.flush()
+        return memory
+
+    async def list_memories_for_admin(
+        self,
+        *,
+        status: str | None = None,
+        group_id: str | None = None,
+        user_id: str | None = None,
+        limit: int = 200,
+    ) -> list[MemoryRecord]:
+        query = select(MemoryRecord)
+        if status:
+            query = query.where(MemoryRecord.status == status)
+        if group_id is not None:
+            query = query.where(MemoryRecord.group_id == group_id)
+        if user_id is not None:
+            query = query.where(MemoryRecord.user_id == user_id)
+        result = await self.session.execute(query.order_by(MemoryRecord.id.desc()).limit(limit))
+        return list(result.scalars().all())
+
+    async def get_memory_by_id(self, memory_id: int) -> MemoryRecord | None:
+        result = await self.session.execute(select(MemoryRecord).where(MemoryRecord.id == memory_id))
+        return result.scalar_one_or_none()
+
+    async def update_memory_by_id(self, memory_id: int, changes: dict[str, Any]) -> MemoryRecord | None:
+        memory = await self.get_memory_by_id(memory_id)
+        if memory is None:
+            return None
+        for key in ("group_id", "user_id", "content", "source", "confidence", "status", "created_by"):
+            if key in changes and changes[key] is not None:
+                setattr(memory, key, changes[key])
+        await self.session.flush()
+        return memory
+
+    async def approved_memories_for_context(
+        self,
+        *,
+        group_id: str,
+        user_id: str,
+        limit: int = 8,
+    ) -> list[MemoryRecord]:
+        result = await self.session.execute(
+            select(MemoryRecord)
+            .where(
+                MemoryRecord.status == "approved",
+                or_(MemoryRecord.group_id == "", MemoryRecord.group_id == group_id),
+                or_(MemoryRecord.user_id == "", MemoryRecord.user_id == user_id),
+            )
+            .order_by(MemoryRecord.id.desc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
 
     async def audit(
         self,

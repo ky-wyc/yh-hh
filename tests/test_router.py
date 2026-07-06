@@ -331,6 +331,57 @@ async def test_ai_system_prompt_uses_runtime_bot_nickname(settings, repo, messag
     assert sender.group_messages == [("10001", "我是小灵。")]
 
 
+async def test_ai_only_uses_approved_memories(settings, repo, message_router, sender):
+    await repo.create_memory(
+        group_id="10001",
+        user_id="20001",
+        content="用户喜欢回答里带项目编号 A-17",
+        source="admin",
+        status="approved",
+        created_by="admin",
+    )
+    await repo.create_memory(
+        group_id="10001",
+        user_id="20001",
+        content="这条待审核记忆不能参与回答",
+        source="user_command",
+        status="pending",
+        created_by="20001",
+    )
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads((await request.aread()).decode("utf-8"))
+        user_prompt = payload["messages"][1]["content"]
+        assert "已确认记忆" in user_prompt
+        assert "用户喜欢回答里带项目编号 A-17" in user_prompt
+        assert "这条待审核记忆不能参与回答" not in user_prompt
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": "A-17 已收到。"}}],
+                "usage": {"prompt_tokens": 5, "completion_tokens": 3},
+            },
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://llm.test")
+    llm = LLMService(client)
+    router = MessageRouter(settings, llm, message_router.rate_limiter)
+    await repo.update_llm_config(
+        {
+            "base_url": "https://llm.test/v1",
+            "api_key": "test-key",
+            "model": "test-model",
+        }
+    )
+    event = normalize_group_message(group_event("/ai 记得我的偏好吗", message_id=32), settings)
+
+    outcome = await router.handle(event, repo, sender)
+
+    await client.aclose()
+    assert outcome.replied is True
+    assert sender.group_messages == [("10001", "A-17 已收到。")]
+
+
 async def test_dice_does_not_call_llm(settings, repo, message_router, sender):
     event = normalize_group_message(group_event("/dice 2d6", message_id=3), settings)
 
@@ -419,6 +470,43 @@ async def test_admin_can_update_existing_keyword_rule(settings, repo, message_ro
 
     assert hit.replied is True
     assert sender.group_messages[-1] == ("10001", "第二条回复")
+
+
+async def test_remember_command_creates_pending_memory(settings, repo, message_router, sender):
+    event = normalize_group_message(group_event("/remember 我喜欢简短回答", message_id=30), settings)
+
+    outcome = await message_router.handle(event, repo, sender)
+    memories = await repo.list_memories_for_admin()
+
+    assert outcome.replied is True
+    assert outcome.skill_name == "memory"
+    assert "已记录为待审核记忆" in sender.group_messages[0][1]
+    assert len(memories) == 1
+    assert memories[0].content == "我喜欢简短回答"
+    assert memories[0].status == "pending"
+    assert memories[0].group_id == "10001"
+    assert memories[0].user_id == "20001"
+    assert memories[0].source == "user_command"
+
+
+async def test_forget_command_deletes_own_memory(settings, repo, message_router, sender):
+    memory = await repo.create_memory(
+        group_id="10001",
+        user_id="20001",
+        content="我喜欢简短回答",
+        source="user_command",
+        status="approved",
+        created_by="20001",
+    )
+    event = normalize_group_message(group_event(f"/forget {memory.id}", message_id=31), settings)
+
+    outcome = await message_router.handle(event, repo, sender)
+    memories = await repo.list_memories_for_admin()
+
+    assert outcome.replied is True
+    assert outcome.skill_name == "memory"
+    assert "已删除记忆" in sender.group_messages[0][1]
+    assert memories[0].status == "deleted"
 
 
 async def test_configured_command_prefix_is_used_for_routing(settings, repo, message_router, sender):

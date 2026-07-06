@@ -20,6 +20,9 @@ from app.schemas import (
     LLMTestRequest,
     LoginRequest,
     LoginResponse,
+    MemoryCreate,
+    MemoryOut,
+    MemoryUpdate,
 )
 
 router = APIRouter(prefix="/api")
@@ -49,6 +52,21 @@ def keyword_rule_out(rule) -> KeywordRuleOut:
         enabled=rule.enabled,
         created_by=rule.created_by,
         created_at=rule.created_at.isoformat(),
+    )
+
+
+def memory_out(memory) -> MemoryOut:
+    return MemoryOut(
+        id=memory.id,
+        group_id=memory.group_id,
+        user_id=memory.user_id,
+        content=memory.content,
+        source=memory.source,
+        confidence=memory.confidence,
+        status=memory.status,
+        created_by=memory.created_by,
+        created_at=memory.created_at.isoformat(),
+        updated_at=memory.updated_at.isoformat(),
     )
 
 
@@ -224,6 +242,90 @@ async def delete_keyword_rule(
         group_id=group_id,
         target_type="keyword",
         target_id=keyword,
+        detail={"source": "admin"},
+    )
+    await session.commit()
+    return {"deleted": True}
+
+
+@router.get("/memories", response_model=list[MemoryOut], dependencies=[Depends(require_admin)])
+async def list_memories(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    status: str | None = Query(default=None, pattern=r"^(pending|approved|rejected|deleted)$"),
+    group_id: str | None = Query(default=None, pattern=r"^\d*$"),
+    user_id: str | None = Query(default=None, pattern=r"^\d*$"),
+):
+    repo = repo_from(request, session)
+    memories = await repo.list_memories_for_admin(status=status, group_id=group_id, user_id=user_id)
+    return [memory_out(memory) for memory in memories]
+
+
+@router.post("/memories", response_model=MemoryOut, dependencies=[Depends(require_admin)])
+async def create_memory(
+    payload: MemoryCreate,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    repo = repo_from(request, session)
+    memory = await repo.create_memory(
+        group_id=payload.group_id,
+        user_id=payload.user_id,
+        content=payload.content,
+        source=payload.source,
+        confidence=payload.confidence,
+        status=payload.status,
+        created_by="admin",
+    )
+    await repo.audit(
+        action="memory_create",
+        group_id=memory.group_id,
+        target_type="memory",
+        target_id=str(memory.id),
+        detail={"source": "admin", "status": memory.status},
+    )
+    await session.commit()
+    return memory_out(memory)
+
+
+@router.patch("/memories/{memory_id}", response_model=MemoryOut, dependencies=[Depends(require_admin)])
+async def update_memory(
+    memory_id: Annotated[int, Path(ge=1)],
+    payload: MemoryUpdate,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    repo = repo_from(request, session)
+    changes = payload.model_dump(exclude_unset=True)
+    memory = await repo.update_memory_by_id(memory_id, changes)
+    if memory is None:
+        raise HTTPException(status_code=404, detail="memory not found")
+    await repo.audit(
+        action="memory_update",
+        group_id=memory.group_id,
+        target_type="memory",
+        target_id=str(memory.id),
+        detail={"source": "admin", "changes": changes},
+    )
+    await session.commit()
+    return memory_out(memory)
+
+
+@router.delete("/memories/{memory_id}", dependencies=[Depends(require_admin)])
+async def delete_memory(
+    memory_id: Annotated[int, Path(ge=1)],
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    repo = repo_from(request, session)
+    memory = await repo.update_memory_by_id(memory_id, {"status": "deleted"})
+    if memory is None:
+        raise HTTPException(status_code=404, detail="memory not found")
+    await repo.audit(
+        action="memory_delete",
+        group_id=memory.group_id,
+        target_type="memory",
+        target_id=str(memory.id),
         detail={"source": "admin"},
     )
     await session.commit()

@@ -42,6 +42,7 @@ class LLMService:
         skill_name: str = "ai",
     ) -> LLMResult:
         config = await repo.get_llm_config()
+        prompt = await self._with_approved_memories(repo, prompt, group_id=group_id, user_id=user_id)
         if not config.api_key:
             await repo.save_llm_usage(
                 config=config,
@@ -121,6 +122,20 @@ class LLMService:
         finally:
             if close_client:
                 await client.aclose()
+
+    async def _with_approved_memories(
+        self,
+        repo: Repository,
+        prompt: str,
+        *,
+        group_id: str,
+        user_id: str,
+    ) -> str:
+        memories = await repo.approved_memories_for_context(group_id=group_id, user_id=user_id)
+        if not memories:
+            return prompt
+        memory_text = "\n".join(f"- {memory.content}" for memory in reversed(memories))
+        return f"已确认记忆：\n{memory_text}\n\n当前问题：{prompt}"
 
 
 def build_system_prompt(bot_nicknames: list[str]) -> str:

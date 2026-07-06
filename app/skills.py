@@ -33,6 +33,8 @@ class SkillRegistry:
             "ping": self.ping,
             "ai": self.ai,
             "dice": self.dice,
+            "remember": self.remember,
+            "forget": self.forget,
             "warn": self.warn,
             "banword": self.banword,
         }
@@ -59,6 +61,8 @@ class SkillRegistry:
                 f"{prefix}ping - 健康检查",
                 f"{prefix}ai 问题 - 向大模型提问",
                 f"{prefix}dice 或 {prefix}dice 2d6 - 掷骰子",
+                f"{prefix}remember 内容 - 记录待审核记忆",
+                f"{prefix}forget 记忆ID - 删除自己的记忆",
                 f"{prefix}warn @用户 原因 - 管理员警告",
                 f"{prefix}banword add/remove/list - 关键词拦截",
             ]
@@ -95,6 +99,58 @@ class SkillRegistry:
         sides = min(max(int(match.group(2)), 2), 1000)
         rolls = [random.randint(1, sides) for _ in range(count)]
         return SkillResult(text=f"{count}d{sides}: {rolls}，总和 {sum(rolls)}", skill_name="dice")
+
+    async def remember(self, args: str, ctx: SkillContext) -> SkillResult:
+        content = args.strip()
+        if not content:
+            return SkillResult(text=f"用法：{ctx.command_prefix}remember 要记住的内容", skill_name="memory")
+        if len(content) > 1000:
+            return SkillResult(text="记忆内容太长，请控制在 1000 字以内。", skill_name="memory")
+        memory = await ctx.repo.create_memory(
+            group_id=ctx.group_id,
+            user_id=ctx.user_id,
+            content=content,
+            source="user_command",
+            confidence=0.7,
+            status="pending",
+            created_by=ctx.user_id,
+        )
+        await ctx.repo.audit(
+            action="memory_create_pending",
+            actor_user_id=ctx.user_id,
+            group_id=ctx.group_id,
+            target_type="memory",
+            target_id=str(memory.id),
+            detail={"source": "user_command"},
+        )
+        return SkillResult(text=f"已记录为待审核记忆，ID：{memory.id}", skill_name="memory")
+
+    async def forget(self, args: str, ctx: SkillContext) -> SkillResult:
+        memory_id_text = args.strip()
+        if not memory_id_text or not memory_id_text.isdigit():
+            return SkillResult(text=f"用法：{ctx.command_prefix}forget 记忆ID", skill_name="memory")
+        memory = await ctx.repo.get_memory_by_id(int(memory_id_text))
+        if memory is None or memory.status == "deleted":
+            return SkillResult(text="没有找到这条记忆。", skill_name="memory")
+
+        user = await ctx.repo.ensure_user(ctx.user_id)
+        can_delete = memory.user_id == ctx.user_id or user.role in {"super_admin", "group_admin"}
+        if not can_delete:
+            return SkillResult(text="权限不足：只能删除自己的记忆，管理员可以删除本群记忆。", skill_name="memory")
+        if user.role == "group_admin" and memory.group_id not in {"", ctx.group_id}:
+            return SkillResult(text="权限不足：不能删除其他群的记忆。", skill_name="memory")
+
+        await ctx.repo.update_memory_by_id(memory.id, {"status": "deleted"})
+        await ctx.repo.audit(
+            action="memory_delete",
+            actor_user_id=ctx.user_id,
+            actor_role=user.role,
+            group_id=ctx.group_id,
+            target_type="memory",
+            target_id=str(memory.id),
+            detail={"source": "user_command"},
+        )
+        return SkillResult(text=f"已删除记忆，ID：{memory.id}", skill_name="memory")
 
     async def warn(self, args: str, ctx: SkillContext) -> SkillResult:
         user = await ctx.repo.ensure_user(ctx.user_id)
