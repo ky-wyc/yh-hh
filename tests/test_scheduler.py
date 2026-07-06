@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import timedelta
 
 from app.config import Settings
@@ -141,3 +142,48 @@ async def test_cleanup_context_task_expires_game_states(repo, sender):
     assert active_game is None
     assert runs[0].status == "success"
     assert "expired_games=1" in runs[0].result_message
+
+
+async def test_knowledge_reindex_task_rebuilds_documents_and_records_history(repo, sender):
+    first = await repo.create_knowledge_document(
+        group_id="10001",
+        title="FAQ 1",
+        content="第一篇知识。",
+        enabled=True,
+        created_by="admin",
+    )
+    second = await repo.create_knowledge_document(
+        group_id="10001",
+        title="FAQ 2",
+        content="第二篇知识。",
+        enabled=True,
+        created_by="admin",
+    )
+    await repo.create_scheduled_task(
+        name="知识库后台重建",
+        task_type="knowledge_reindex",
+        schedule_type="once",
+        group_id="10001",
+        payload={"only_failed": False, "include_disabled": False, "limit": 10},
+        next_run_at=now_utc() - timedelta(seconds=1),
+        enabled=True,
+        created_by="admin",
+    )
+
+    executed = await run_due_tasks_once(repo, sender, cache=None)
+    runs = await repo.list_task_runs()
+    history = await repo.list_knowledge_reindex_runs(group_id="10001")
+    detail = json.loads(history[0].detail_json)
+
+    assert executed == 1
+    assert sender.group_messages == []
+    assert runs[0].status == "success"
+    assert "knowledge_reindex_done" in runs[0].result_message
+    assert detail["source"] == "scheduler"
+    assert detail["processed"] == 2
+    assert detail["succeeded"] == 2
+    assert detail["requested"] == 2
+    assert {document.id for document in await repo.list_knowledge_documents(group_id="10001")} == {
+        first.id,
+        second.id,
+    }

@@ -682,6 +682,21 @@ def test_knowledge_docs_can_be_bulk_reindexed_and_retry_failed_from_admin(tmp_pa
         assert history.json()[1]["total"] == 2
         assert history.json()[1]["succeeded"] == 2
 
+        queued = client.post(
+            "/api/knowledge-docs/reindex-queue",
+            json={"group_id": "10001", "only_failed": True, "limit": 10},
+            headers=headers,
+        )
+        assert queued.status_code == 200
+        queued_task = queued.json()
+        assert queued_task["task_type"] == "knowledge_reindex"
+        assert queued_task["group_id"] == "10001"
+        assert queued_task["payload"]["only_failed"] is True
+        assert queued_task["enabled"] is True
+
+        latest_audit = client.get("/api/audit-logs", headers=headers)
+        assert latest_audit.json()[0]["action"] == "knowledge_reindex_queued"
+
 
 def test_scheduled_tasks_can_be_managed_from_admin(tmp_path):
     settings = Settings(

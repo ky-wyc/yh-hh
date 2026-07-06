@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field, field_validator
 REPLY_MODES = {"disabled", "command_only", "mention_only", "active"}
 MEMORY_STATUSES = {"pending", "approved", "rejected", "deleted"}
 SCHEDULE_TYPES = {"once", "daily", "interval"}
-TASK_TYPES = {"reminder_once", "daily_summary", "cleanup_context"}
+TASK_TYPES = {"reminder_once", "daily_summary", "cleanup_context", "knowledge_reindex"}
 
 
 class LoginRequest(BaseModel):

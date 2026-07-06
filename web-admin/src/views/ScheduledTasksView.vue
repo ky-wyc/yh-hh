@@ -24,6 +24,7 @@
           <el-option label="群提醒" value="reminder_once" />
           <el-option label="每日总结" value="daily_summary" />
           <el-option label="清理上下文" value="cleanup_context" />
+          <el-option label="知识库重建" value="knowledge_reindex" />
         </el-select>
       </el-form-item>
       <el-form-item label="调度方式">
@@ -33,8 +34,8 @@
           <el-option label="固定间隔" value="interval" />
         </el-select>
       </el-form-item>
-      <el-form-item v-if="requiresGroup" label="目标群号">
-        <el-input v-model="form.group_id" placeholder="填写 QQ 群号" />
+      <el-form-item v-if="showsGroup" label="目标群号">
+        <el-input v-model="form.group_id" :placeholder="requiresGroup ? '填写 QQ 群号' : '留空处理全部'" />
       </el-form-item>
       <el-form-item label="下次运行">
         <el-date-picker
@@ -183,6 +184,7 @@ const form = reactive({
 })
 
 const requiresGroup = computed(() => ['reminder_once', 'daily_summary'].includes(form.task_type))
+const showsGroup = computed(() => ['reminder_once', 'daily_summary', 'knowledge_reindex'].includes(form.task_type))
 
 function errorText(error: any, fallback: string) {
   const detail = error?.response?.data?.detail
@@ -229,6 +231,9 @@ function buildPayload() {
   }
   if (form.task_type === 'daily_summary') {
     return { hours: form.hours }
+  }
+  if (form.task_type === 'knowledge_reindex') {
+    return { only_failed: false, include_disabled: false, limit: 100 }
   }
   return {}
 }
@@ -288,6 +293,9 @@ function applyTaskDefaults() {
     form.group_id = ''
     form.schedule_type = 'interval'
   }
+  if (form.task_type === 'knowledge_reindex') {
+    form.schedule_type = 'once'
+  }
 }
 
 async function saveTask() {
@@ -298,7 +306,7 @@ async function saveTask() {
     name: form.name.trim(),
     task_type: form.task_type,
     schedule_type: form.schedule_type,
-    group_id: requiresGroup.value ? form.group_id.trim() : '',
+    group_id: showsGroup.value ? form.group_id.trim() : '',
     payload: buildPayload(),
     enabled: form.enabled,
     next_run_at: form.next_run_at,
@@ -370,7 +378,8 @@ function taskTypeText(value: string) {
   const labels: Record<string, string> = {
     reminder_once: '群提醒',
     daily_summary: '每日总结',
-    cleanup_context: '清理上下文'
+    cleanup_context: '清理上下文',
+    knowledge_reindex: '知识库重建'
   }
   return labels[value] || value
 }

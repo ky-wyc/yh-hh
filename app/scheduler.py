@@ -82,6 +82,48 @@ async def execute_task(
             await cache.clear_contexts()
         expired_games = await repo.expire_game_states()
         return f"context_cleanup_done;expired_games={expired_games}"
+    if task.task_type == "knowledge_reindex":
+        only_failed = bool(payload.get("only_failed", False))
+        include_disabled = bool(payload.get("include_disabled", False))
+        limit = max(1, min(int(payload.get("limit") or 100), 500))
+        documents = await repo.list_knowledge_documents(
+            group_id=task.group_id or None,
+            index_status="failed" if only_failed else None,
+        )
+        selected = [
+            document
+            for document in documents
+            if include_disabled or document.enabled
+        ][:limit]
+        for document in selected:
+            await repo.rebuild_knowledge_chunks(document)
+        succeeded = sum(
+            1 for document in selected if document.index_status in {"completed", "vectorized"}
+        )
+        failed = sum(1 for document in selected if document.index_status == "failed")
+        skipped = max(0, len(documents) - len(selected))
+        await repo.audit(
+            action="knowledge_docs_reindex",
+            group_id=task.group_id,
+            target_type="knowledge_doc",
+            target_id="bulk",
+            detail={
+                "source": "scheduler",
+                "task_id": task.id,
+                "only_failed": only_failed,
+                "include_disabled": include_disabled,
+                "requested": len(documents),
+                "processed": len(selected),
+                "succeeded": succeeded,
+                "failed": failed,
+                "skipped": skipped,
+            },
+            result="failed" if failed else "success",
+        )
+        return (
+            "knowledge_reindex_done;"
+            f"processed={len(selected)};succeeded={succeeded};failed={failed};skipped={skipped}"
+        )
     raise ValueError(f"unsupported task_type: {task.task_type}")
 
 

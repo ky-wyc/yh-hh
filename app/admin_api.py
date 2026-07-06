@@ -754,6 +754,46 @@ async def reindex_knowledge_docs(
     )
 
 
+@router.post(
+    "/knowledge-docs/reindex-queue",
+    response_model=ScheduledTaskOut,
+    dependencies=[Depends(require_admin)],
+)
+async def queue_knowledge_reindex(
+    payload: KnowledgeReindexRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    repo = repo_from(request, session)
+    task = await repo.create_scheduled_task(
+        name="知识库失败重试" if payload.only_failed else "知识库后台重建",
+        task_type="knowledge_reindex",
+        schedule_type="once",
+        group_id=payload.group_id,
+        payload={
+            "only_failed": payload.only_failed,
+            "include_disabled": payload.include_disabled,
+            "limit": payload.limit,
+        },
+        enabled=True,
+        next_run_at=datetime.now(UTC).replace(tzinfo=None),
+        created_by="admin",
+    )
+    await repo.audit(
+        action="knowledge_reindex_queued",
+        group_id=payload.group_id,
+        target_type="scheduled_task",
+        target_id=str(task.id),
+        detail={
+            "only_failed": payload.only_failed,
+            "include_disabled": payload.include_disabled,
+            "limit": payload.limit,
+        },
+    )
+    await session.commit()
+    return scheduled_task_out(task)
+
+
 @router.get(
     "/knowledge-docs/reindex-runs",
     response_model=list[KnowledgeReindexRunOut],

@@ -21,6 +21,12 @@
         <el-button type="warning" plain :loading="retryingFailed" @click="bulkReindex(true)">
           重试失败
         </el-button>
+        <el-button type="success" plain :loading="queueingReindex" @click="queueReindex(false)">
+          后台重建
+        </el-button>
+        <el-button type="warning" plain :loading="queueingFailed" @click="queueReindex(true)">
+          后台重试失败
+        </el-button>
       </el-form-item>
     </el-form>
     <el-alert
@@ -194,6 +200,8 @@ const saving = ref(false)
 const searching = ref(false)
 const bulkReindexing = ref(false)
 const retryingFailed = ref(false)
+const queueingReindex = ref(false)
+const queueingFailed = ref(false)
 const editingId = ref<number | null>(null)
 const bulkResult = ref<{
   total: number
@@ -386,6 +394,40 @@ async function bulkReindex(onlyFailed: boolean) {
   } finally {
     retryingFailed.value = false
     bulkReindexing.value = false
+  }
+}
+
+async function queueReindex(onlyFailed: boolean) {
+  if (!validateOptionalGroup(filters.group_id, '筛选群号')) return
+  const title = onlyFailed ? '后台重试失败索引' : '后台批量重建索引'
+  const message = onlyFailed
+    ? '将把当前群号筛选下的失败文档加入后台重试队列，是否继续？'
+    : '将把当前群号筛选下的已启用文档加入后台重建队列，是否继续？'
+  try {
+    await ElMessageBox.confirm(message, title, {
+      type: 'warning',
+      confirmButtonText: '加入队列',
+      cancelButtonText: '取消'
+    })
+  } catch {
+    return
+  }
+
+  if (onlyFailed) queueingFailed.value = true
+  else queueingReindex.value = true
+  try {
+    await api.post('/knowledge-docs/reindex-queue', {
+      group_id: filters.group_id.trim(),
+      only_failed: onlyFailed,
+      include_disabled: false,
+      limit: 500
+    })
+    ElMessage.success('已加入后台队列，可在定时任务执行历史查看进度')
+  } catch (error: any) {
+    ElMessage.error(errorText(error, '加入后台队列失败'))
+  } finally {
+    queueingFailed.value = false
+    queueingReindex.value = false
   }
 }
 
