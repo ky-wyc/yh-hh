@@ -13,6 +13,7 @@ from app.models import now_utc
 from app.repository import Repository
 from app.scheduler import maybe_create_memory_summary_by_count
 from app.skills import PRIVATE_SUPPORTED_SKILLS, SkillContext, SkillRegistry
+from app.web_search import WebSearchService, should_auto_web_search, with_search_context
 
 
 @dataclass(slots=True)
@@ -31,12 +32,14 @@ class MessageRouter:
         llm: LLMService,
         rate_limiter,
         image: ImageGenerationService | None = None,
+        web_search: WebSearchService | None = None,
     ):
         self.settings = settings
         self.llm = llm
         self.image = image or ImageGenerationService()
+        self.web_search = web_search or WebSearchService()
         self.rate_limiter = rate_limiter
-        self.skills = SkillRegistry(self.image)
+        self.skills = SkillRegistry(self.image, self.web_search)
 
     async def handle(self, event: BotEvent, repo: Repository, sender) -> RouteOutcome:
         if event.message_type == "private":
@@ -159,6 +162,7 @@ class MessageRouter:
                     recent_context=recent_context,
                     enabled_skills=enabled_skills,
                     sender=sender,
+                    web_search=self.web_search,
                 ),
             )
             if not await self._send_group_reply(event, message_log, repo, sender, result.text):
@@ -216,12 +220,20 @@ class MessageRouter:
             prompt = self._remove_bot_mentions(event.text, bot_qq, bot_settings.bot_nickname_list) or event.text
             context = await self.rate_limiter.get_context(event.group_id)
             prompt_with_context = self._with_context(prompt, context)
+            prompt_with_context, llm_skill_name = await self._maybe_with_web_search(
+                repo,
+                group_id=event.group_id,
+                user_id=event.user_id,
+                prompt=prompt_with_context,
+                original_query=prompt,
+                skill_name="mention_chat",
+            )
             llm_result = await self.llm.chat(
                 repo,
                 prompt_with_context,
                 group_id=event.group_id,
                 user_id=event.user_id,
-                skill_name="mention_chat",
+                skill_name=llm_skill_name,
             )
             if not await self._send_group_reply(event, message_log, repo, sender, llm_result.text):
                 return RouteOutcome(status="error", reason="send_failed")
@@ -245,12 +257,20 @@ class MessageRouter:
         if group.reply_mode == "active" and ai_enabled and self._looks_like_question(event.text):
             context = await self.rate_limiter.get_context(event.group_id)
             prompt_with_context = self._with_context(event.text, context)
+            prompt_with_context, llm_skill_name = await self._maybe_with_web_search(
+                repo,
+                group_id=event.group_id,
+                user_id=event.user_id,
+                prompt=prompt_with_context,
+                original_query=event.text,
+                skill_name="active_chat",
+            )
             llm_result = await self.llm.chat(
                 repo,
                 prompt_with_context,
                 group_id=event.group_id,
                 user_id=event.user_id,
-                skill_name="active_chat",
+                skill_name=llm_skill_name,
             )
             if not await self._send_group_reply(event, message_log, repo, sender, llm_result.text):
                 return RouteOutcome(status="error", reason="send_failed")
@@ -376,6 +396,7 @@ class MessageRouter:
                     recent_context=recent_context,
                     enabled_skills=enabled_skills,
                     sender=sender,
+                    web_search=self.web_search,
                 ),
             )
             if not await self._send_private_reply(event, message_log, repo, sender, result.text):
@@ -403,12 +424,20 @@ class MessageRouter:
 
         context = await self.rate_limiter.get_context(context_key)
         prompt_with_context = self._with_context(event.text, context)
+        prompt_with_context, llm_skill_name = await self._maybe_with_web_search(
+            repo,
+            group_id="",
+            user_id=event.user_id,
+            prompt=prompt_with_context,
+            original_query=event.text,
+            skill_name="private_chat",
+        )
         llm_result = await self.llm.chat(
             repo,
             prompt_with_context,
             group_id="",
             user_id=event.user_id,
-            skill_name="private_chat",
+            skill_name=llm_skill_name,
         )
         if not await self._send_private_reply(event, message_log, repo, sender, llm_result.text):
             return RouteOutcome(status="error", reason="send_failed")
@@ -560,6 +589,40 @@ class MessageRouter:
             reply_text=text,
             skill_name="admin-lite",
         )
+
+    async def _maybe_with_web_search(
+        self,
+        repo: Repository,
+        *,
+        group_id: str,
+        user_id: str,
+        prompt: str,
+        original_query: str,
+        skill_name: str,
+    ) -> tuple[str, str]:
+        if not should_auto_web_search(original_query):
+            return prompt, skill_name
+        if not await repo.effective_skill_enabled(skill_name="web-search", group_id=group_id):
+            return prompt, skill_name
+        config = await repo.get_web_search_config()
+        if not config.enabled or not config.auto_enabled:
+            return prompt, skill_name
+        try:
+            results = await self.web_search.search(config, original_query)
+        except Exception as exc:
+            await repo.audit(
+                action="web_search_failed",
+                actor_role="system",
+                group_id=group_id,
+                target_type="web_search",
+                target_id=skill_name,
+                result="failed",
+                detail={"error": str(exc)[:500]},
+            )
+            return prompt, skill_name
+        if not results:
+            return prompt, skill_name
+        return with_search_context(prompt, results), f"{skill_name}_web_search"
 
     async def _send_group_reply(
         self,

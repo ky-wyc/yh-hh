@@ -61,6 +61,14 @@ class Settings(BaseSettings):
     image_size: str = Field(default="1024x1024", alias="IMAGE_SIZE")
     image_timeout_seconds: float = Field(default=120, alias="IMAGE_TIMEOUT_SECONDS")
 
+    web_search_enabled: bool = Field(default=False, alias="WEB_SEARCH_ENABLED")
+    web_search_auto_enabled: bool = Field(default=False, alias="WEB_SEARCH_AUTO_ENABLED")
+    web_search_provider: str = Field(default="searxng", alias="WEB_SEARCH_PROVIDER")
+    web_search_base_url: str = Field(default="", alias="WEB_SEARCH_BASE_URL")
+    web_search_api_key: str = Field(default="", alias="WEB_SEARCH_API_KEY")
+    web_search_result_count: int = Field(default=5, alias="WEB_SEARCH_RESULT_COUNT")
+    web_search_timeout_seconds: float = Field(default=15, alias="WEB_SEARCH_TIMEOUT_SECONDS")
+
     rate_limit_per_user_per_minute: int = Field(default=12, alias="RATE_LIMIT_PER_USER_PER_MINUTE")
     rate_limit_per_group_per_minute: int = Field(default=60, alias="RATE_LIMIT_PER_GROUP_PER_MINUTE")
     memory_summary_by_count_enabled: bool = Field(default=False, alias="MEMORY_SUMMARY_BY_COUNT_ENABLED")

@@ -54,6 +54,9 @@ from app.schemas import (
     SkillSettingOut,
     SkillSettingUpdate,
     TaskRunOut,
+    WebSearchSettingsOut,
+    WebSearchSettingsUpdate,
+    WebSearchTestRequest,
 )
 from app.skills import SKILL_CATALOG
 
@@ -1402,6 +1405,68 @@ async def test_image_settings(
         "model": result.model,
         "message": result.message,
         "url": result.url,
+    }
+
+
+@router.get(
+    "/settings/web-search",
+    response_model=WebSearchSettingsOut,
+    dependencies=[Depends(require_admin)],
+)
+async def get_web_search_settings(request: Request, session: AsyncSession = Depends(get_session)):
+    repo = repo_from(request, session)
+    config = await repo.get_web_search_config()
+    return WebSearchSettingsOut(
+        enabled=config.enabled,
+        auto_enabled=config.auto_enabled,
+        provider=config.provider,
+        base_url=config.base_url,
+        result_count=config.result_count,
+        timeout_seconds=config.timeout_seconds,
+        api_key_configured=bool(config.api_key),
+    )
+
+
+@router.patch("/settings/web-search", dependencies=[Depends(require_admin)])
+async def update_web_search_settings(
+    payload: WebSearchSettingsUpdate,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    repo = repo_from(request, session)
+    await repo.update_web_search_config(payload.model_dump(exclude_unset=True))
+    await repo.audit(action="web_search_settings_update", target_type="settings", target_id="web_search")
+    await session.commit()
+    return await get_web_search_settings(request, session)
+
+
+@router.post("/settings/web-search/test", dependencies=[Depends(require_admin)])
+async def test_web_search_settings(
+    payload: WebSearchTestRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    repo = repo_from(request, session)
+    config = await repo.get_web_search_config()
+    try:
+        results = await request.app.state.web_search.search(config, payload.query)
+    except Exception as exc:
+        return {
+            "status": "failed",
+            "provider": config.provider,
+            "result_count": 0,
+            "results": [],
+            "error": str(exc),
+        }
+    return {
+        "status": "success",
+        "provider": config.provider,
+        "result_count": len(results),
+        "results": [
+            {"title": result.title, "url": result.url, "snippet": result.snippet}
+            for result in results
+        ],
+        "error": "",
     }
 
 

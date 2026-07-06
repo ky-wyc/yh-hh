@@ -20,6 +20,7 @@ from app.onebot import OneBotConnectionManager, websocket_event_stream
 from app.repository import Repository
 from app.router import MessageRouter
 from app.scheduler import TaskScheduler
+from app.web_search import WebSearchService
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.state.llm,
             app.state.rate_limiter,
             app.state.image,
+            app.state.web_search,
         )
         app.state.task_scheduler = TaskScheduler(
             session_factory=app.state.session_factory,
@@ -73,6 +75,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.llm = LLMService()
     app.state.image = ImageGenerationService()
     app.state.embedding = EmbeddingService()
+    app.state.web_search = WebSearchService()
     app.state.token_store = TokenStore()
 
     @app.websocket(settings.onebot_reverse_ws_path)

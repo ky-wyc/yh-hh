@@ -59,6 +59,77 @@
     </el-alert>
   </el-card>
 
+  <h2 class="page-title section-title">联网搜索设置</h2>
+  <el-card>
+    <el-form label-width="130px">
+      <el-form-item label="启用搜索">
+        <el-switch v-model="webSearchForm.enabled" />
+      </el-form-item>
+      <el-form-item label="自动联网">
+        <el-switch v-model="webSearchForm.auto_enabled" />
+        <span class="field-hint">开启后，AI 回复实时类问题时会先搜索再回答。</span>
+      </el-form-item>
+      <el-form-item label="Provider">
+        <el-select v-model="webSearchForm.provider">
+          <el-option label="SearXNG" value="searxng" />
+          <el-option label="Tavily" value="tavily" />
+        </el-select>
+      </el-form-item>
+      <el-form-item label="Base URL">
+        <el-input v-model="webSearchForm.base_url" placeholder="https://your-search.example" />
+      </el-form-item>
+      <el-form-item label="API Key">
+        <el-input v-model="webSearchForm.api_key" placeholder="留空则不修改" show-password />
+        <span class="field-hint">
+          {{ webSearchForm.api_key_configured ? '当前已配置' : '当前未配置' }}
+        </span>
+      </el-form-item>
+      <el-form-item label="结果数量">
+        <el-input-number v-model="webSearchForm.result_count" :min="1" :max="10" />
+      </el-form-item>
+      <el-form-item label="超时秒数">
+        <el-input-number v-model="webSearchForm.timeout_seconds" :min="1" :max="60" />
+      </el-form-item>
+      <el-form-item label="测试查询">
+        <el-input
+          v-model="webSearchTestQuery"
+          type="textarea"
+          :rows="2"
+          maxlength="300"
+          show-word-limit
+        />
+      </el-form-item>
+      <el-form-item>
+        <el-button type="primary" :loading="webSearchSaving" @click="saveWebSearch">保存联网搜索</el-button>
+        <el-button :loading="webSearchTesting" @click="testWebSearch">测试搜索</el-button>
+        <el-button type="danger" plain :loading="webSearchClearingKey" @click="clearWebSearchApiKey">
+          清空 API Key
+        </el-button>
+      </el-form-item>
+    </el-form>
+    <el-alert
+      v-if="webSearchTestResult"
+      class="test-result"
+      :type="webSearchTestResult.status === 'success' ? 'success' : 'warning'"
+      :title="`搜索结果：${webSearchTestResult.status}`"
+      :closable="false"
+      show-icon
+    >
+      <p class="result-meta">
+        Provider：{{ webSearchTestResult.provider }} /
+        结果数：{{ webSearchTestResult.result_count }}
+      </p>
+      <p v-if="webSearchTestResult.error" class="result-text">{{ webSearchTestResult.error }}</p>
+      <p
+        v-for="item in webSearchTestResult.results"
+        :key="item.url"
+        class="result-text"
+      >
+        {{ item.title }} - {{ item.url }}
+      </p>
+    </el-alert>
+  </el-card>
+
   <h2 class="page-title section-title">生图模型设置</h2>
   <el-card>
     <el-form label-width="130px">
@@ -257,6 +328,7 @@ const form = reactive<any>({})
 const botForm = reactive<any>({})
 const embeddingForm = reactive<any>({})
 const imageForm = reactive<any>({})
+const webSearchForm = reactive<any>({})
 const saving = ref(false)
 const testing = ref(false)
 const clearingKey = ref(false)
@@ -267,6 +339,9 @@ const embeddingClearingKey = ref(false)
 const imageSaving = ref(false)
 const imageTesting = ref(false)
 const imageClearingKey = ref(false)
+const webSearchSaving = ref(false)
+const webSearchTesting = ref(false)
+const webSearchClearingKey = ref(false)
 const testPrompt = ref('请回复 pong')
 const testResult = ref<{ status: string; model: string; text: string } | null>(null)
 const embeddingTestText = ref('部署 preflight 检查')
@@ -285,18 +360,34 @@ const imageTestResult = ref<{
   message: string
   url: string
 } | null>(null)
+const webSearchTestQuery = ref('OpenAI latest news')
+const webSearchTestResult = ref<{
+  status: string
+  provider: string
+  result_count: number
+  results: Array<{ title: string; url: string; snippet: string }>
+  error: string
+} | null>(null)
 
 async function load() {
-  const [{ data: llm }, { data: bot }, { data: embedding }, { data: image }] = await Promise.all([
+  const [
+    { data: llm },
+    { data: bot },
+    { data: embedding },
+    { data: image },
+    { data: webSearch }
+  ] = await Promise.all([
     api.get('/settings/llm'),
     api.get('/settings/bot'),
     api.get('/settings/embedding'),
-    api.get('/settings/image')
+    api.get('/settings/image'),
+    api.get('/settings/web-search')
   ])
   Object.assign(form, llm, { api_key: '' })
   Object.assign(botForm, bot)
   Object.assign(embeddingForm, embedding, { api_key: '' })
   Object.assign(imageForm, image, { api_key: '' })
+  Object.assign(webSearchForm, webSearch, { api_key: '' })
 }
 
 async function save() {
@@ -408,6 +499,62 @@ async function clearImageApiKey() {
     ElMessage.error(error?.response?.data?.detail || '清空生图 API Key 失败')
   } finally {
     imageClearingKey.value = false
+  }
+}
+
+async function saveWebSearch() {
+  const payload = { ...webSearchForm }
+  if (!payload.api_key) delete payload.api_key
+  webSearchSaving.value = true
+  try {
+    await api.patch('/settings/web-search', payload)
+    ElMessage.success('已保存联网搜索设置')
+    await load()
+  } catch (error: any) {
+    ElMessage.error(error?.response?.data?.detail || '保存联网搜索设置失败')
+  } finally {
+    webSearchSaving.value = false
+  }
+}
+
+async function testWebSearch() {
+  webSearchTesting.value = true
+  webSearchTestResult.value = null
+  try {
+    const { data } = await api.post('/settings/web-search/test', { query: webSearchTestQuery.value })
+    webSearchTestResult.value = data
+    if (data.status === 'success') {
+      ElMessage.success('联网搜索测试完成')
+    } else {
+      ElMessage.warning('联网搜索测试未成功，请查看结果')
+    }
+  } catch (error: any) {
+    ElMessage.error(error?.response?.data?.detail || '联网搜索测试失败')
+  } finally {
+    webSearchTesting.value = false
+  }
+}
+
+async function clearWebSearchApiKey() {
+  try {
+    await ElMessageBox.confirm('清空后 Tavily 等需要密钥的搜索服务会不可用。', '清空搜索 API Key', {
+      type: 'warning',
+      confirmButtonText: '清空',
+      cancelButtonText: '取消'
+    })
+  } catch {
+    return
+  }
+
+  webSearchClearingKey.value = true
+  try {
+    await api.patch('/settings/web-search', { api_key: '' })
+    ElMessage.success('已清空搜索 API Key')
+    await load()
+  } catch (error: any) {
+    ElMessage.error(error?.response?.data?.detail || '清空搜索 API Key 失败')
+  } finally {
+    webSearchClearingKey.value = false
   }
 }
 

@@ -11,11 +11,27 @@ from app.llm import LLMService
 from app.models import User
 from app.repository import Repository
 from app.router import MessageRouter
+from app.web_search import WebSearchResult
 
 
 class FailingSender:
     async def send_group_message(self, group_id: str, message: str) -> None:
         raise RuntimeError("send failed")
+
+
+class FakeWebSearchService:
+    def __init__(self):
+        self.queries: list[str] = []
+
+    async def search(self, config, query: str):
+        self.queries.append(query)
+        return [
+            WebSearchResult(
+                title="Result",
+                url="https://example.com/result",
+                snippet="fresh fact",
+            )
+        ]
 
 
 def group_event(text: str, *, group_id: str = "10001", user_id: str = "20001", message_id: int = 1):
@@ -257,6 +273,52 @@ async def test_ai_without_api_key_has_clear_error(settings, repo, message_router
 
     assert outcome.replied is True
     assert "API Key" in sender.group_messages[0][1]
+
+
+async def test_search_command_returns_web_results_without_llm(settings, repo, sender):
+    search = FakeWebSearchService()
+    router = MessageRouter(settings, LLMService(), MemoryRateLimiter(), web_search=search)
+    await repo.update_web_search_config({"enabled": True, "provider": "searxng"})
+    event = normalize_group_message(group_event("/search OpenAI latest news", message_id=52), settings)
+
+    outcome = await router.handle(event, repo, sender)
+
+    assert outcome.replied is True
+    assert outcome.skill_name == "web-search"
+    assert search.queries == ["OpenAI latest news"]
+    assert "https://example.com/result" in sender.group_messages[0][1]
+
+
+async def test_ai_command_auto_searches_realtime_questions(settings, repo, sender):
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads((await request.aread()).decode("utf-8"))
+        user_prompt = payload["messages"][1]["content"]
+        assert "Web search results:" in user_prompt
+        assert "https://example.com/result" in user_prompt
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": "fresh answer"}}],
+                "usage": {"prompt_tokens": 5, "completion_tokens": 3},
+            },
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://llm.test")
+    search = FakeWebSearchService()
+    llm = LLMService(client)
+    router = MessageRouter(settings, llm, MemoryRateLimiter(), web_search=search)
+    await repo.update_llm_config(
+        {"base_url": "https://llm.test/v1", "api_key": "test-key", "model": "test-model"}
+    )
+    await repo.update_web_search_config({"enabled": True, "auto_enabled": True, "provider": "searxng"})
+    event = normalize_group_message(group_event("/ai latest OpenAI news", message_id=53), settings)
+
+    outcome = await router.handle(event, repo, sender)
+
+    await client.aclose()
+    assert outcome.replied is True
+    assert search.queries == ["latest OpenAI news"]
+    assert sender.group_messages == [("10001", "fresh answer")]
 
 
 async def test_mention_only_replies_to_at_bot(settings, repo, message_router, sender):

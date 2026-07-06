@@ -142,6 +142,10 @@ def test_preflight_rejects_invalid_runtime_settings(tmp_path):
         LLM_TIMEOUT_SECONDS="fast",
         IMAGE_TIMEOUT_SECONDS="slow",
         IMAGE_SIZE="large",
+        WEB_SEARCH_PROVIDER="unknown",
+        WEB_SEARCH_BASE_URL="search.local",
+        WEB_SEARCH_RESULT_COUNT="0",
+        WEB_SEARCH_TIMEOUT_SECONDS="fast",
         MEMORY_SUMMARY_MESSAGE_THRESHOLD="9",
         RATE_LIMIT_PER_USER_PER_MINUTE="0",
         RATE_LIMIT_PER_GROUP_PER_MINUTE="many",
@@ -157,6 +161,10 @@ def test_preflight_rejects_invalid_runtime_settings(tmp_path):
     assert "LLM_TIMEOUT_SECONDS must be a number" in errors
     assert "IMAGE_TIMEOUT_SECONDS must be a number" in errors
     assert "IMAGE_SIZE must look like 1024x1024" in errors
+    assert "WEB_SEARCH_PROVIDER must be searxng or tavily" in errors
+    assert "WEB_SEARCH_BASE_URL must start with http:// or https://" in errors
+    assert "WEB_SEARCH_RESULT_COUNT must be between 1 and 10" in errors
+    assert "WEB_SEARCH_TIMEOUT_SECONDS must be a number" in errors
     assert "MEMORY_SUMMARY_MESSAGE_THRESHOLD must be between 10 and 5000" in errors
     assert "RATE_LIMIT_PER_USER_PER_MINUTE must be between 1 and 10000" in errors
     assert "RATE_LIMIT_PER_GROUP_PER_MINUTE must be an integer" in errors

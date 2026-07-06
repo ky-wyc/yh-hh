@@ -11,6 +11,12 @@ from app.image_generation import ImageGenerationService
 from app.llm import LLMService
 from app.models import now_utc
 from app.repository import Repository
+from app.web_search import (
+    WebSearchService,
+    format_search_context,
+    should_auto_web_search,
+    with_search_context,
+)
 
 
 SKILL_CATALOG: dict[str, dict[str, Any]] = {
@@ -67,6 +73,18 @@ SKILL_CATALOG: dict[str, dict[str, Any]] = {
         "description": "使用独立生图模型生成图片。",
         "category": "AI",
         "commands": ["image", "draw"],
+        "risk_level": "medium",
+        "requires_admin": False,
+        "uses_llm": True,
+        "uses_knowledge": False,
+        "uses_memory": False,
+        "private_supported": True,
+    },
+    "web-search": {
+        "display_name": "\u8054\u7f51\u641c\u7d22",
+        "description": "\u81ea\u52a8\u5224\u65ad\u5b9e\u65f6\u95ee\u9898\u5e76\u5148\u8054\u7f51\u641c\u7d22\u518d\u56de\u7b54\u3002",
+        "category": "AI",
+        "commands": ["search", "web", "\u8054\u7f51", "\u641c\u7d22"],
         "risk_level": "medium",
         "requires_admin": False,
         "uses_llm": True,
@@ -135,6 +153,10 @@ COMMAND_SKILLS: dict[str, str] = {
     "kb": "kb",
     "image": "image",
     "draw": "image",
+    "search": "web-search",
+    "web": "web-search",
+    "\u8054\u7f51": "web-search",
+    "\u641c\u7d22": "web-search",
     "dice": "dice",
     "guess": "guess",
     "remember": "memory",
@@ -153,6 +175,7 @@ class SkillContext:
     image: ImageGenerationService
     group_id: str
     user_id: str
+    web_search: WebSearchService | None = None
     message_id: str = ""
     command_prefix: str = "/"
     recent_context: list[str] | None = None
@@ -168,8 +191,13 @@ class SkillResult:
 
 
 class SkillRegistry:
-    def __init__(self, image: ImageGenerationService | None = None):
+    def __init__(
+        self,
+        image: ImageGenerationService | None = None,
+        web_search: WebSearchService | None = None,
+    ):
         self.image = image or ImageGenerationService()
+        self.web_search = web_search or WebSearchService()
         self._handlers = {
             "help": self.help,
             "ping": self.ping,
@@ -177,6 +205,10 @@ class SkillRegistry:
             "kb": self.kb,
             "image": self.image_generate,
             "draw": self.image_generate,
+            "search": self.web_search_answer,
+            "web": self.web_search_answer,
+            "\u8054\u7f51": self.web_search_answer,
+            "\u641c\u7d22": self.web_search_answer,
             "dice": self.dice,
             "guess": self.guess,
             "remember": self.remember,
@@ -221,6 +253,8 @@ class SkillRegistry:
             lines.append(f"{prefix}kb 问题 - 查询知识库")
         if "image" in enabled:
             lines.append(f"{prefix}image 提示词 - 生成图片")
+        if "web-search" in enabled:
+            lines.append(f"{prefix}search 问题 - 联网搜索后回答")
         if "dice" in enabled:
             lines.append(f"{prefix}dice 或 {prefix}dice 2d6 - 掷骰子")
         if "guess" in enabled:
@@ -245,12 +279,18 @@ class SkillRegistry:
         prompt = args.strip()
         if ctx.recent_context:
             prompt = "最近群聊上下文：\n" + "\n".join(ctx.recent_context[-10:]) + f"\n\n当前问题：{prompt}"
+        prompt, skill_name = await self._maybe_add_web_search(
+            ctx,
+            prompt,
+            original_query=args.strip(),
+            skill_name="ai",
+        )
         result = await ctx.llm.chat(
             ctx.repo,
             prompt,
             group_id=ctx.group_id,
             user_id=ctx.user_id,
-            skill_name="ai",
+            skill_name=skill_name,
         )
         return SkillResult(text=result.text, skill_name="ai", llm_model=result.model)
 
@@ -309,6 +349,82 @@ class SkillRegistry:
         config = await ctx.repo.get_image_config()
         result = await self.image.generate(config, prompt)
         return SkillResult(text=result.message, skill_name="image", llm_model=result.model)
+
+    async def web_search_answer(self, args: str, ctx: SkillContext) -> SkillResult:
+        query = args.strip()
+        if not query:
+            return SkillResult(
+                text=f"Usage: {ctx.command_prefix}search query",
+                skill_name="web-search",
+            )
+        service = ctx.web_search or self.web_search
+        config = await ctx.repo.get_web_search_config()
+        if not config.enabled:
+            return SkillResult(
+                text="\u8054\u7f51\u641c\u7d22\u672a\u542f\u7528\uff0c\u8bf7\u5148\u5728\u540e\u53f0\u914d\u7f6e\u3002",
+                skill_name="web-search",
+            )
+        try:
+            results = await service.search(config, query)
+        except Exception as exc:
+            return SkillResult(
+                text=f"\u8054\u7f51\u641c\u7d22\u5931\u8d25\uff1a{str(exc)[:120]}",
+                skill_name="web-search",
+            )
+        if not results:
+            return SkillResult(
+                text="\u6ca1\u6709\u641c\u5230\u53ef\u7528\u7ed3\u679c\u3002",
+                skill_name="web-search",
+            )
+
+        llm_config = await ctx.repo.get_llm_config()
+        if llm_config.api_key:
+            result = await ctx.llm.complete(
+                ctx.repo,
+                with_search_context(query, results),
+                system_prompt=(
+                    "Answer in Chinese using the provided web search results. "
+                    "Be concise and include source links when useful."
+                ),
+                group_id=ctx.group_id,
+                user_id=ctx.user_id,
+                skill_name="web_search_answer",
+            )
+            if result.status == "success" and result.text.strip():
+                return SkillResult(
+                    text=result.text.strip(),
+                    skill_name="web-search",
+                    llm_model=result.model,
+                )
+
+        return SkillResult(
+            text="\u8054\u7f51\u641c\u7d22\u7ed3\u679c\uff1a\n" + format_search_context(results),
+            skill_name="web-search",
+        )
+
+    async def _maybe_add_web_search(
+        self,
+        ctx: SkillContext,
+        prompt: str,
+        *,
+        original_query: str,
+        skill_name: str,
+    ) -> tuple[str, str]:
+        if ctx.enabled_skills is not None and "web-search" not in ctx.enabled_skills:
+            return prompt, skill_name
+        if not should_auto_web_search(original_query):
+            return prompt, skill_name
+        config = await ctx.repo.get_web_search_config()
+        if not config.enabled or not config.auto_enabled:
+            return prompt, skill_name
+        service = ctx.web_search or self.web_search
+        try:
+            results = await service.search(config, original_query)
+        except Exception:
+            return prompt, skill_name
+        if not results:
+            return prompt, skill_name
+        return with_search_context(prompt, results), f"{skill_name}_web_search"
 
     async def dice(self, args: str, ctx: SkillContext) -> SkillResult:
         spec = args.strip().lower() or "1d6"

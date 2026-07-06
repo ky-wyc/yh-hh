@@ -830,6 +830,55 @@ class ImageTestRequest(BaseModel):
     prompt: str = Field(default="一只可爱的猫，头像风格", min_length=1, max_length=500)
 
 
+class WebSearchSettingsOut(BaseModel):
+    enabled: bool
+    auto_enabled: bool
+    provider: str
+    base_url: str
+    result_count: int
+    timeout_seconds: float
+    api_key_configured: bool
+
+
+class WebSearchSettingsUpdate(BaseModel):
+    enabled: bool | None = None
+    auto_enabled: bool | None = None
+    provider: str | None = None
+    base_url: str | None = None
+    api_key: str | None = Field(default=None)
+    result_count: int | None = Field(default=None, ge=1, le=10)
+    timeout_seconds: float | None = Field(default=None, ge=1, le=60)
+
+    @field_validator("provider")
+    @classmethod
+    def validate_web_search_provider(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        stripped = value.strip().lower()
+        if stripped not in {"searxng", "tavily"}:
+            raise ValueError("provider must be searxng or tavily")
+        return stripped
+
+    @field_validator("base_url")
+    @classmethod
+    def validate_web_search_base_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        stripped = value.strip()
+        if not stripped:
+            return stripped
+        parsed = urlparse(stripped)
+        if parsed.scheme not in {"http", "https"}:
+            raise ValueError("base_url must start with http:// or https://")
+        if not parsed.hostname:
+            raise ValueError("base_url must include a host")
+        return stripped
+
+
+class WebSearchTestRequest(BaseModel):
+    query: str = Field(default="OpenAI latest news", min_length=1, max_length=300)
+
+
 class EmbeddingSettingsOut(BaseModel):
     provider: str
     base_url: str

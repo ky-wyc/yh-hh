@@ -14,6 +14,7 @@ from app.config import Settings
 from app.image_generation import ImageResult
 from app.main import create_app
 from app.models import now_utc
+from app.web_search import WebSearchResult
 
 
 def build_xlsx_bytes() -> bytes:
@@ -255,6 +256,73 @@ def test_image_settings_can_be_managed_and_tested_without_leaking_key(tmp_path):
         assert tested.status_code == 200
         assert tested.json()["status"] == "success"
         assert tested.json()["url"] == "https://img.example/cat.png"
+
+
+def test_web_search_settings_can_be_managed_and_tested_without_leaking_key(tmp_path):
+    settings = Settings(
+        DATABASE_URL=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",
+        REDIS_URL="",
+        ADMIN_USERNAME="admin",
+        ADMIN_PASSWORD="secret",
+        WEB_SEARCH_API_KEY="search-secret",
+    )
+    app = create_app(settings)
+
+    class FakeWebSearchService:
+        async def search(self, config, query: str):
+            assert config.provider == "tavily"
+            assert config.api_key == "new-search-secret"
+            assert query == "OpenAI latest news"
+            return [
+                WebSearchResult(
+                    title="OpenAI",
+                    url="https://example.com/openai",
+                    snippet="latest news",
+                )
+            ]
+
+    app.state.web_search = FakeWebSearchService()
+
+    with TestClient(app) as client:
+        token = client.post(
+            "/api/auth/login", json={"username": "admin", "password": "secret"}
+        ).json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        current = client.get("/api/settings/web-search", headers=headers)
+        assert current.status_code == 200
+        assert current.json()["api_key_configured"] is True
+        assert "search-secret" not in str(current.json())
+
+        updated = client.patch(
+            "/api/settings/web-search",
+            json={
+                "enabled": True,
+                "auto_enabled": True,
+                "provider": "tavily",
+                "base_url": "https://search.example",
+                "api_key": "new-search-secret",
+                "result_count": 3,
+                "timeout_seconds": 10,
+            },
+            headers=headers,
+        )
+        assert updated.status_code == 200
+        payload = updated.json()
+        assert payload["enabled"] is True
+        assert payload["auto_enabled"] is True
+        assert payload["provider"] == "tavily"
+        assert payload["api_key_configured"] is True
+        assert "new-search-secret" not in str(payload)
+
+        tested = client.post(
+            "/api/settings/web-search/test",
+            json={"query": "OpenAI latest news"},
+            headers=headers,
+        )
+        assert tested.status_code == 200
+        assert tested.json()["status"] == "success"
+        assert tested.json()["results"][0]["url"] == "https://example.com/openai"
 
 
 def test_embedding_settings_local_test_does_not_require_api_key(tmp_path):

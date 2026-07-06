@@ -37,6 +37,7 @@ RECOMMENDED_NON_EMPTY = [
 ]
 
 REPLY_MODES = {"disabled", "command_only", "mention_only", "active"}
+WEB_SEARCH_PROVIDERS = {"searxng", "tavily"}
 
 
 def _validate_identifier(values: dict, key: str, errors: list[str]) -> None:
@@ -157,6 +158,11 @@ def inspect_env(path: Path) -> tuple[list[str], list[str]]:
     _validate_reverse_ws_url(values, errors)
     _validate_http_url(values, "LLM_BASE_URL", errors)
     _validate_http_url(values, "IMAGE_BASE_URL", errors)
+    _validate_http_url(values, "WEB_SEARCH_BASE_URL", errors)
+
+    web_search_provider = str(values.get("WEB_SEARCH_PROVIDER") or "").strip()
+    if web_search_provider and web_search_provider not in WEB_SEARCH_PROVIDERS:
+        errors.append("WEB_SEARCH_PROVIDER must be searxng or tavily")
 
     database_url = str(values.get("DATABASE_URL") or "").strip()
     postgres_user = str(values.get("POSTGRES_USER") or "").strip()
@@ -188,6 +194,8 @@ def inspect_env(path: Path) -> tuple[list[str], list[str]]:
     _validate_int_range(values, "LLM_MAX_TOKENS", errors, minimum=1, maximum=32000)
     _validate_float_range(values, "LLM_TIMEOUT_SECONDS", errors, minimum=1, maximum=300)
     _validate_float_range(values, "IMAGE_TIMEOUT_SECONDS", errors, minimum=1, maximum=300)
+    _validate_int_range(values, "WEB_SEARCH_RESULT_COUNT", errors, minimum=1, maximum=10)
+    _validate_float_range(values, "WEB_SEARCH_TIMEOUT_SECONDS", errors, minimum=1, maximum=60)
     _validate_int_range(values, "MEMORY_SUMMARY_MESSAGE_THRESHOLD", errors, minimum=10, maximum=5000)
     image_size = str(values.get("IMAGE_SIZE") or "").strip()
     if image_size and not re.fullmatch(r"\d{2,5}x\d{2,5}", image_size):

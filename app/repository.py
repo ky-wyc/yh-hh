@@ -12,6 +12,7 @@ from app.config import Settings, parse_csv
 from app.embedding import EmbeddingConfig, EmbeddingService
 from app.image_generation import ImageConfig
 from app.knowledge import cosine_similarity, chunk_text, knowledge_score, vector_literal
+from app.web_search import WebSearchConfig
 from app.models import (
     AuditLog,
     BotReply,
@@ -396,6 +397,47 @@ class Repository:
             "model": "image_model",
             "size": "image_size",
             "timeout_seconds": "image_timeout_seconds",
+        }
+        for field, value in changes.items():
+            if value is not None and field in key_map:
+                await self.set_setting(key_map[field], str(value))
+
+    async def get_web_search_config(self) -> WebSearchConfig:
+        async def val(key: str, default: str) -> str:
+            stored = await self.get_setting(key)
+            return default if stored is None else stored
+
+        enabled = await val("web_search_enabled", str(self.settings.web_search_enabled))
+        auto_enabled = await val(
+            "web_search_auto_enabled",
+            str(self.settings.web_search_auto_enabled),
+        )
+        return WebSearchConfig(
+            enabled=enabled.lower() == "true",
+            auto_enabled=auto_enabled.lower() == "true",
+            provider=await val("web_search_provider", self.settings.web_search_provider),
+            base_url=await val("web_search_base_url", self.settings.web_search_base_url),
+            api_key=await val("web_search_api_key", self.settings.web_search_api_key),
+            result_count=int(
+                await val("web_search_result_count", str(self.settings.web_search_result_count))
+            ),
+            timeout_seconds=float(
+                await val(
+                    "web_search_timeout_seconds",
+                    str(self.settings.web_search_timeout_seconds),
+                )
+            ),
+        )
+
+    async def update_web_search_config(self, changes: dict[str, Any]) -> None:
+        key_map = {
+            "enabled": "web_search_enabled",
+            "auto_enabled": "web_search_auto_enabled",
+            "provider": "web_search_provider",
+            "base_url": "web_search_base_url",
+            "api_key": "web_search_api_key",
+            "result_count": "web_search_result_count",
+            "timeout_seconds": "web_search_timeout_seconds",
         }
         for field, value in changes.items():
             if value is not None and field in key_map:
