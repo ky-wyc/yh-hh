@@ -18,8 +18,21 @@ def build_xlsx_bytes() -> bytes:
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "FAQ"
-    sheet.append(["问题", "答案"])
-    sheet.append(["如何部署", "使用 Docker Compose"])
+    sheet.append(["Question", "Answer"])
+    sheet.append(["Deploy", "Use Docker Compose"])
+    buffer = BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+    return buffer.getvalue()
+
+
+def build_large_xlsx_bytes(row_count: int = 205) -> bytes:
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Inventory"
+    sheet.append(["Sku", "Name", "Note"])
+    for index in range(1, row_count + 1):
+        sheet.append([f"SKU-{index:03d}", f"Item {index}", f"Important row {index}"])
     buffer = BytesIO()
     workbook.save(buffer)
     workbook.close()
@@ -615,15 +628,67 @@ def test_knowledge_docs_can_be_imported_from_xlsx_for_multiple_groups(tmp_path):
         payload = imported.json()
         assert payload["total"] == 2
         assert payload["file_type"] == "xlsx"
+        assert payload["source_document_count"] == 1
+        assert payload["report"]["source_count"] == 1
+        assert payload["report"]["imported_row_count"] == 1
         assert {item["group_id"] for item in payload["documents"]} == {"10001", "10002"}
-        assert all(item["title"] == "导入 FAQ" for item in payload["documents"])
-        assert "如何部署 | 使用 Docker Compose" in payload["documents"][0]["content"]
+        assert all(
+            item["title"] == "导入 FAQ / Sheet FAQ / rows 2-2"
+            for item in payload["documents"]
+        )
+        assert "Question: Deploy" in payload["documents"][0]["content"]
+        assert "Answer: Use Docker Compose" in payload["documents"][0]["content"]
 
         group_one_docs = client.get("/api/knowledge-docs?group_id=10001", headers=headers)
         assert group_one_docs.status_code == 200
-        assert group_one_docs.json()[0]["title"] == "导入 FAQ"
+        assert group_one_docs.json()[0]["title"] == "导入 FAQ / Sheet FAQ / rows 2-2"
         audit = client.get("/api/audit-logs", headers=headers)
         assert audit.json()[0]["action"] == "knowledge_docs_import"
+
+
+def test_knowledge_import_splits_large_xlsx_into_multiple_documents(tmp_path):
+    settings = Settings(
+        DATABASE_URL=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",
+        REDIS_URL="",
+        ADMIN_USERNAME="admin",
+        ADMIN_PASSWORD="secret",
+    )
+    app = create_app(settings)
+
+    with TestClient(app) as client:
+        token = client.post(
+            "/api/auth/login", json={"username": "admin", "password": "secret"}
+        ).json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        client.patch("/api/groups/10001", json={"name": "Docs"}, headers=headers)
+
+        imported = client.post(
+            "/api/knowledge-docs/import",
+            data={
+                "title": "Inventory Import",
+                "group_ids": json.dumps(["10001"]),
+                "enabled": "true",
+            },
+            files={
+                "file": (
+                    "inventory.xlsx",
+                    build_large_xlsx_bytes(),
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+            },
+            headers=headers,
+        )
+
+        assert imported.status_code == 200
+        payload = imported.json()
+        assert payload["source_document_count"] == 3
+        assert payload["total"] == 3
+        assert payload["report"]["imported_row_count"] == 205
+        assert payload["report"]["document_count"] == 3
+        titles = [item["title"] for item in payload["documents"]]
+        assert titles[0].endswith("rows 2-101")
+        assert titles[-1].endswith("rows 202-206")
+        assert "SKU-205" in payload["documents"][-1]["content"]
 
 
 def test_imported_knowledge_stays_keyword_searchable_when_embedding_fails(tmp_path):
@@ -674,8 +739,8 @@ def test_imported_knowledge_stays_keyword_searchable_when_embedding_fails(tmp_pa
         )
         assert searched.status_code == 200
         results = searched.json()["results"]
-        assert results[0]["title"] == "Deploy FAQ"
-        assert "Docker Compose" in results[0]["content"]
+        assert results[0]["title"] == "Deploy FAQ / Sheet FAQ / rows 2-2"
+        assert "Use Docker Compose" in results[0]["content"]
 
 
 def test_knowledge_doc_can_be_reindexed_from_admin(tmp_path):
@@ -718,6 +783,42 @@ def test_knowledge_doc_can_be_reindexed_from_admin(tmp_path):
         assert history.json()[0]["total"] == 1
         assert history.json()[0]["succeeded"] == 1
         assert history.json()[0]["failed"] == 0
+
+
+def test_knowledge_reindex_runs_can_be_cleared_from_admin(tmp_path):
+    settings = Settings(
+        DATABASE_URL=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",
+        REDIS_URL="",
+        ADMIN_USERNAME="admin",
+        ADMIN_PASSWORD="secret",
+    )
+    app = create_app(settings)
+
+    with TestClient(app) as client:
+        token = client.post(
+            "/api/auth/login", json={"username": "admin", "password": "secret"}
+        ).json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        created = client.post(
+            "/api/knowledge-docs",
+            json={
+                "group_id": "10001",
+                "title": "FAQ",
+                "content": "Reindex me.",
+                "enabled": True,
+            },
+            headers=headers,
+        ).json()
+        client.post(f"/api/knowledge-docs/{created['id']}/reindex", headers=headers)
+        assert client.get("/api/knowledge-docs/reindex-runs?group_id=10001", headers=headers).json()
+
+        cleared = client.delete("/api/knowledge-docs/reindex-runs?group_id=10001", headers=headers)
+
+        assert cleared.status_code == 200
+        assert cleared.json()["deleted"] == 1
+        assert client.get("/api/knowledge-docs/reindex-runs?group_id=10001", headers=headers).json() == []
+        audit = client.get("/api/audit-logs", headers=headers)
+        assert audit.json()[0]["action"] == "knowledge_reindex_runs_clear"
 
 
 def test_knowledge_docs_can_be_bulk_reindexed_and_retry_failed_from_admin(tmp_path):

@@ -9,6 +9,7 @@
       <el-form-item label="索引状态">
         <el-select v-model="filters.index_status" clearable placeholder="全部">
           <el-option label="正常" value="vectorized" />
+          <el-option label="关键词可用" value="completed" />
           <el-option label="失败" value="failed" />
         </el-select>
       </el-form-item>
@@ -59,7 +60,14 @@
   </el-card>
 
   <el-card class="toolbar-card">
-    <template #header>最近索引记录</template>
+    <template #header>
+      <div class="card-header-row">
+        <span>最近索引记录</span>
+        <el-button size="small" type="danger" plain :loading="clearingReindexRuns" @click="clearReindexRuns">
+          清空记录
+        </el-button>
+      </div>
+    </template>
     <el-table :data="reindexRuns" border v-loading="historyLoading">
       <el-table-column label="类型" width="110">
         <template #default="{ row }">{{ reindexActionText(row.action, row.only_failed) }}</template>
@@ -129,6 +137,14 @@
         <el-button type="primary" :loading="importing" @click="importDocument">导入知识库</el-button>
       </el-form-item>
     </el-form>
+    <el-alert
+      v-if="importReport"
+      class="import-report"
+      type="success"
+      :closable="false"
+      show-icon
+      :title="`导入完成：生成 ${importReport.created_total} 篇文档，源文件拆分 ${importReport.source_document_count} 篇，导入 ${importReport.imported_row_count || 0} 行，跳过空行 ${importReport.skipped_empty_rows || 0}`"
+    />
   </el-card>
 
   <el-card class="toolbar-card">
@@ -241,14 +257,28 @@ type ReindexRun = {
   created_at: string
 }
 
+type ImportReport = {
+  created_total: number
+  source_document_count: number
+  source_count: number
+  row_count: number
+  imported_row_count: number
+  skipped_empty_rows: number
+  document_count: number
+  truncated: boolean
+  warnings: string[]
+}
+
 const documents = ref<KnowledgeDocument[]>([])
 const groupOptions = ref<GroupOption[]>([])
 const searchResults = ref<SearchResult[]>([])
 const reindexRuns = ref<ReindexRun[]>([])
+const importReport = ref<ImportReport | null>(null)
 const loading = ref(false)
 const historyLoading = ref(false)
 const saving = ref(false)
 const importing = ref(false)
+const clearingReindexRuns = ref(false)
 const searching = ref(false)
 const bulkReindexing = ref(false)
 const retryingFailed = ref(false)
@@ -386,6 +416,17 @@ async function importDocument() {
     const { data } = await api.post('/knowledge-docs/import', payload, {
       headers: { 'Content-Type': 'multipart/form-data' }
     })
+    importReport.value = {
+      created_total: data.total,
+      source_document_count: data.source_document_count,
+      source_count: data.report?.source_count || 0,
+      row_count: data.report?.row_count || 0,
+      imported_row_count: data.report?.imported_row_count || 0,
+      skipped_empty_rows: data.report?.skipped_empty_rows || 0,
+      document_count: data.report?.document_count || 0,
+      truncated: Boolean(data.report?.truncated),
+      warnings: data.report?.warnings || []
+    }
     ElMessage.success(`已导入 ${data.total} 篇知识库文档`)
     importForm.title = ''
     importForm.group_ids = []
@@ -396,6 +437,35 @@ async function importDocument() {
     ElMessage.error(errorText(error, '导入知识库失败'))
   } finally {
     importing.value = false
+  }
+}
+
+async function clearReindexRuns() {
+  if (!validateOptionalGroup(filters.group_id, '筛选群号')) return
+  const message = filters.group_id.trim()
+    ? `确认清空群 ${filters.group_id.trim()} 的最近索引记录？`
+    : '确认清空全部最近索引记录？'
+  try {
+    await ElMessageBox.confirm(message, '清空索引记录', {
+      type: 'warning',
+      confirmButtonText: '清空',
+      cancelButtonText: '取消'
+    })
+  } catch {
+    return
+  }
+
+  clearingReindexRuns.value = true
+  try {
+    const params: Record<string, string> = {}
+    if (filters.group_id.trim()) params.group_id = filters.group_id.trim()
+    const { data } = await api.delete('/knowledge-docs/reindex-runs', { params })
+    ElMessage.success(`已清空 ${data.deleted} 条索引记录`)
+    await loadReindexRuns()
+  } catch (error: any) {
+    ElMessage.error(errorText(error, '清空索引记录失败'))
+  } finally {
+    clearingReindexRuns.value = false
   }
 }
 
@@ -616,6 +686,13 @@ onMounted(() => {
   margin-bottom: 16px;
 }
 
+.card-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .filter-form {
   display: flex;
   flex-wrap: wrap;
@@ -651,6 +728,10 @@ onMounted(() => {
 }
 
 .bulk-result {
+  margin-top: 12px;
+}
+
+.import-report {
   margin-top: 12px;
 }
 </style>

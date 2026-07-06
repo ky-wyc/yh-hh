@@ -740,14 +740,15 @@ async def import_knowledge_doc(
 
     documents = []
     for group_id in target_group_ids:
-        document = await repo.create_knowledge_document(
-            group_id=group_id,
-            title=imported.title,
-            content=imported.content,
-            enabled=enabled,
-            created_by="admin",
-        )
-        documents.append(document)
+        for imported_document in imported.documents:
+            document = await repo.create_knowledge_document(
+                group_id=group_id,
+                title=imported_document.title,
+                content=imported_document.content,
+                enabled=enabled,
+                created_by="admin",
+            )
+            documents.append(document)
 
     await repo.audit(
         action="knowledge_docs_import",
@@ -758,12 +759,34 @@ async def import_knowledge_doc(
             "file_type": imported.file_type,
             "group_ids": target_group_ids,
             "document_count": len(documents),
+            "source_document_count": len(imported.documents),
+            "report": {
+                "source_count": imported.report.source_count,
+                "row_count": imported.report.row_count,
+                "imported_row_count": imported.report.imported_row_count,
+                "skipped_empty_rows": imported.report.skipped_empty_rows,
+                "document_count": imported.report.document_count,
+                "truncated": imported.report.truncated,
+                "warnings": imported.report.warnings,
+            },
         },
     )
     await session.commit()
     return KnowledgeImportOut(
         total=len(documents),
         file_type=imported.file_type,
+        source_document_count=len(imported.documents),
+        report={
+            "file_name": imported.report.file_name,
+            "file_type": imported.report.file_type,
+            "source_count": imported.report.source_count,
+            "row_count": imported.report.row_count,
+            "imported_row_count": imported.report.imported_row_count,
+            "skipped_empty_rows": imported.report.skipped_empty_rows,
+            "document_count": imported.report.document_count,
+            "truncated": imported.report.truncated,
+            "warnings": imported.report.warnings,
+        },
         documents=[knowledge_document_out(document) for document in documents],
     )
 
@@ -885,6 +908,25 @@ async def list_knowledge_reindex_runs(
     repo = repo_from(request, session)
     runs = await repo.list_knowledge_reindex_runs(group_id=group_id, limit=limit)
     return [knowledge_reindex_run_out(run) for run in runs]
+
+
+@router.delete("/knowledge-docs/reindex-runs", dependencies=[Depends(require_admin)])
+async def clear_knowledge_reindex_runs(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    group_id: str | None = Query(default=None, pattern=r"^\d*$"),
+):
+    repo = repo_from(request, session)
+    deleted = await repo.clear_knowledge_reindex_runs(group_id=group_id)
+    await repo.audit(
+        action="knowledge_reindex_runs_clear",
+        group_id=group_id or "",
+        target_type="knowledge_reindex_run",
+        target_id="bulk",
+        detail={"source": "admin", "deleted": deleted},
+    )
+    await session.commit()
+    return {"deleted": deleted}
 
 
 @router.patch(

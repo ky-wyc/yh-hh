@@ -315,9 +315,23 @@ class KnowledgeDocumentOut(BaseModel):
     updated_at: str
 
 
+class KnowledgeImportReportOut(BaseModel):
+    file_name: str
+    file_type: str
+    source_count: int
+    row_count: int
+    imported_row_count: int
+    skipped_empty_rows: int
+    document_count: int
+    truncated: bool
+    warnings: list[str]
+
+
 class KnowledgeImportOut(BaseModel):
     total: int
     file_type: str
+    source_document_count: int
+    report: KnowledgeImportReportOut
     documents: list[KnowledgeDocumentOut]
 
 

@@ -803,6 +803,16 @@ class Repository:
         result = await self.session.execute(query.order_by(AuditLog.id.desc()).limit(limit))
         return list(result.scalars().all())
 
+    async def clear_knowledge_reindex_runs(self, *, group_id: str | None = None) -> int:
+        query = delete(AuditLog).where(
+            AuditLog.action.in_(["knowledge_doc_reindex", "knowledge_docs_reindex"])
+        )
+        if group_id is not None:
+            query = query.where(AuditLog.group_id == group_id)
+        result = await self.session.execute(query)
+        await self.session.flush()
+        return result.rowcount or 0
+
     async def update_knowledge_document_by_id(
         self,
         document_id: int,
