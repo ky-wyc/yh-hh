@@ -760,6 +760,54 @@ def test_knowledge_docs_can_be_imported_from_xlsx_for_multiple_groups(tmp_path):
         assert audit.json()[0]["action"] == "knowledge_docs_import"
 
 
+def test_knowledge_import_falls_back_when_ai_map_raises(tmp_path):
+    settings = Settings(
+        DATABASE_URL=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",
+        KNOWLEDGE_FILE_DIR=str(tmp_path / "knowledge_files"),
+        REDIS_URL="",
+        ADMIN_USERNAME="admin",
+        ADMIN_PASSWORD="secret",
+        LLM_API_KEY="configured",
+    )
+    app = create_app(settings)
+
+    class BrokenLLM:
+        async def complete(self, *args, **kwargs):
+            raise RuntimeError("relay timeout")
+
+    app.state.llm = BrokenLLM()
+
+    with TestClient(app) as client:
+        token = client.post(
+            "/api/auth/login", json={"username": "admin", "password": "secret"}
+        ).json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        client.patch("/api/groups/10001", json={"name": "Docs"}, headers=headers)
+
+        imported = client.post(
+            "/api/knowledge-docs/import",
+            data={
+                "title": "Fallback Import",
+                "group_ids": json.dumps(["10001"]),
+                "enabled": "true",
+            },
+            files={
+                "file": (
+                    "faq.xlsx",
+                    build_xlsx_bytes(),
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+            },
+            headers=headers,
+        )
+
+        assert imported.status_code == 200
+        payload = imported.json()
+        assert payload["total"] == 1
+        assert payload["documents"][0]["ai_index_status"] == "ai_failed"
+        assert payload["documents"][0]["ai_summary"]
+
+
 def test_knowledge_import_splits_large_xlsx_into_multiple_documents(tmp_path):
     settings = Settings(
         DATABASE_URL=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",

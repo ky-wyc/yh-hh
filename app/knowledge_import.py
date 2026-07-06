@@ -9,7 +9,7 @@ from typing import Any
 from openpyxl import load_workbook
 
 
-SUPPORTED_EXTENSIONS = {".txt", ".md", ".csv", ".xlsx", ".xlsm"}
+SUPPORTED_EXTENSIONS = {".txt", ".md", ".csv", ".xls", ".xlsx", ".xlsm"}
 MAX_IMPORT_BYTES = 25 * 1024 * 1024
 MAX_DOCUMENT_CHARS = 20_000
 ROWS_PER_DOCUMENT = 50
@@ -62,8 +62,10 @@ def parse_imported_knowledge(filename: str, data: bytes, title: str = "") -> Imp
         documents = parse_text_documents(data, base_title, report)
     elif suffix == ".csv":
         documents = parse_csv_documents(data, base_title, report)
-    else:
+    elif suffix in {".xlsx", ".xlsm"}:
         documents = parse_workbook_documents(data, base_title, report)
+    else:
+        documents = parse_xls_documents(data, base_title, report)
 
     documents = [document for document in documents if document.content.strip()]
     if not documents:
@@ -163,6 +165,44 @@ def parse_workbook_documents(
             )
     finally:
         workbook.close()
+    return documents
+
+
+def parse_xls_documents(
+    data: bytes,
+    base_title: str,
+    report: KnowledgeImportReport,
+) -> list[ImportedKnowledgeDocument]:
+    import xlrd
+
+    workbook = xlrd.open_workbook(file_contents=data)
+    documents: list[ImportedKnowledgeDocument] = []
+    report.source_count = workbook.nsheets
+    for sheet in workbook.sheets():
+        header: list[str] = []
+        row_sections: list[tuple[int, str]] = []
+        for row_index in range(sheet.nrows):
+            row_number = row_index + 1
+            values = [format_cell(sheet.cell_value(row_index, column_index)) for column_index in range(sheet.ncols)]
+            if not any(values):
+                report.skipped_empty_rows += 1
+                continue
+            report.row_count += 1
+            if not header:
+                header = values
+                continue
+            row_sections.append((row_number, format_structured_row(row_number, values, header)))
+            report.imported_row_count += 1
+        if not row_sections and header:
+            row_sections.append((1, "Row 1\n" + "\n".join(value for value in header if value)))
+            report.imported_row_count += 1
+        documents.extend(
+            pack_row_sections(
+                base_title=base_title,
+                source_label=f"Sheet {sheet.name}",
+                row_sections=row_sections,
+            )
+        )
     return documents
 
 
@@ -271,6 +311,8 @@ def decode_text(data: bytes) -> str:
 def format_cell(value: Any) -> str:
     if value is None:
         return ""
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
     return str(value).strip()
 
 

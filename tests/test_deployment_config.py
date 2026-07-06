@@ -68,8 +68,11 @@ def test_web_admin_nginx_proxies_api_to_bot_app():
     dockerfile = (ROOT / "web-admin/Dockerfile").read_text(encoding="utf-8")
 
     assert "try_files $uri $uri/ /index.html;" in nginx
+    assert "client_max_body_size 30m;" in nginx
     assert "location /api/" in nginx
     assert "proxy_pass http://bot-app:8000/api/;" in nginx
+    assert "proxy_read_timeout 300s;" in nginx
+    assert "proxy_send_timeout 300s;" in nginx
     assert "COPY nginx.conf /etc/nginx/conf.d/default.conf" in dockerfile
 
 

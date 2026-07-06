@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import login, require_admin
 from app.knowledge_import import parse_imported_knowledge
-from app.knowledge_map import build_knowledge_map
+from app.knowledge_map import build_knowledge_map, build_local_knowledge_map
 from app.repository import Repository
 from app.schemas import (
     BotSettingsOut,
@@ -58,6 +58,7 @@ from app.schemas import (
 from app.skills import SKILL_CATALOG
 
 router = APIRouter(prefix="/api")
+MAX_AI_MAPS_ON_IMPORT = 20
 
 
 def safe_file_name(filename: str) -> str:
@@ -803,16 +804,31 @@ async def import_knowledge_doc(
     source_file_name = file.filename or imported.report.file_name
     source_file_path = save_knowledge_file(request, source_file_name, data)
 
-    knowledge_maps = [
-        await build_knowledge_map(
-            repo,
-            request.app.state.llm,
-            title=imported_document.title,
-            content=imported_document.content,
-            source_locator=imported_document.locator,
-        )
-        for imported_document in imported.documents
-    ]
+    knowledge_maps = []
+    for index, imported_document in enumerate(imported.documents):
+        if index < MAX_AI_MAPS_ON_IMPORT:
+            try:
+                knowledge_map = await build_knowledge_map(
+                    repo,
+                    request.app.state.llm,
+                    title=imported_document.title,
+                    content=imported_document.content,
+                    source_locator=imported_document.locator,
+                )
+            except Exception:
+                knowledge_map = build_local_knowledge_map(
+                    imported_document.title,
+                    imported_document.content,
+                    imported_document.locator,
+                )
+                knowledge_map.status = "ai_failed"
+        else:
+            knowledge_map = build_local_knowledge_map(
+                imported_document.title,
+                imported_document.content,
+                imported_document.locator,
+            )
+        knowledge_maps.append(knowledge_map)
     documents = []
     ai_map_status_counts: dict[str, int] = {}
     for group_id in target_group_ids:
