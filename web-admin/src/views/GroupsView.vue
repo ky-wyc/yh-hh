@@ -145,7 +145,8 @@ const overviewItems = [
   { key: 'memories', label: '记忆' },
   { key: 'knowledge_docs', label: '知识' },
   { key: 'keyword_rules', label: '关键词' },
-  { key: 'scheduled_tasks', label: '任务' }
+  { key: 'scheduled_tasks', label: '任务' },
+  { key: 'active_games', label: '游戏' }
 ]
 
 async function load() {

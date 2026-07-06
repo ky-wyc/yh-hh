@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import random
 import re
 from dataclasses import dataclass
@@ -14,6 +15,7 @@ SKILL_CATALOG: dict[str, dict[str, str]] = {
     "ai": {"display_name": "AI 问答", "description": "大模型聊天、@ 回复和主动回答。"},
     "kb": {"display_name": "知识库", "description": "查询后台维护的群知识库。"},
     "dice": {"display_name": "掷骰子", "description": "娱乐掷骰子命令。"},
+    "guess": {"display_name": "猜数字", "description": "按群持久保存的猜数字游戏。"},
     "memory": {"display_name": "长期记忆", "description": "手动记住和忘记待审核记忆。"},
     "admin-lite": {"display_name": "基础群管", "description": "警告、关键词拦截和轻量群管命令。"},
 }
@@ -24,6 +26,7 @@ COMMAND_SKILLS: dict[str, str] = {
     "ai": "ai",
     "kb": "kb",
     "dice": "dice",
+    "guess": "guess",
     "remember": "memory",
     "forget": "memory",
     "warn": "admin-lite",
@@ -58,6 +61,7 @@ class SkillRegistry:
             "ai": self.ai,
             "kb": self.kb,
             "dice": self.dice,
+            "guess": self.guess,
             "remember": self.remember,
             "forget": self.forget,
             "warn": self.warn,
@@ -98,6 +102,8 @@ class SkillRegistry:
             lines.append(f"{prefix}kb 问题 - 查询知识库")
         if "dice" in enabled:
             lines.append(f"{prefix}dice 或 {prefix}dice 2d6 - 掷骰子")
+        if "guess" in enabled:
+            lines.append(f"{prefix}guess start/数字/stop - 猜数字")
         if "memory" in enabled:
             lines.append(f"{prefix}remember 内容 - 记录待审核记忆")
             lines.append(f"{prefix}forget 记忆ID - 删除自己的记忆")
@@ -152,6 +158,84 @@ class SkillRegistry:
         sides = min(max(int(match.group(2)), 2), 1000)
         rolls = [random.randint(1, sides) for _ in range(count)]
         return SkillResult(text=f"{count}d{sides}: {rolls}，总和 {sum(rolls)}", skill_name="dice")
+
+    async def guess(self, args: str, ctx: SkillContext) -> SkillResult:
+        command = args.strip().lower()
+        if command == "start":
+            secret = random.randint(1, 100)
+            try:
+                await ctx.repo.create_guess_game(
+                    group_id=ctx.group_id,
+                    user_id=ctx.user_id,
+                    secret=secret,
+                )
+            except ValueError:
+                return SkillResult(text="本群已经有进行中的猜数字游戏。", skill_name="guess")
+            await ctx.repo.audit(
+                action="guess_start",
+                actor_user_id=ctx.user_id,
+                group_id=ctx.group_id,
+                target_type="game",
+                target_id="guess",
+            )
+            return SkillResult(text="猜数字开始：我已经想好 1-100 的数字了。", skill_name="guess")
+
+        if command == "stop":
+            game = await ctx.repo.active_game(group_id=ctx.group_id, game_name="guess")
+            if game is None:
+                return SkillResult(text="本群没有进行中的猜数字游戏。", skill_name="guess")
+            user = await ctx.repo.ensure_user(ctx.user_id)
+            if game.started_by != ctx.user_id and user.role not in {"super_admin", "group_admin"}:
+                return SkillResult(text="权限不足：只有发起者或管理员可以结束游戏。", skill_name="guess")
+            await ctx.repo.stop_active_game(group_id=ctx.group_id, game_name="guess")
+            await ctx.repo.audit(
+                action="guess_stop",
+                actor_user_id=ctx.user_id,
+                actor_role=user.role,
+                group_id=ctx.group_id,
+                target_type="game",
+                target_id="guess",
+            )
+            return SkillResult(text="猜数字游戏已结束。", skill_name="guess")
+
+        if not command or not command.isdigit():
+            return SkillResult(
+                text=f"用法：{ctx.command_prefix}guess start，{ctx.command_prefix}guess 50，{ctx.command_prefix}guess stop",
+                skill_name="guess",
+            )
+
+        game = await ctx.repo.active_game(group_id=ctx.group_id, game_name="guess")
+        if game is None:
+            return SkillResult(text=f"本群没有进行中的猜数字游戏，发送 {ctx.command_prefix}guess start 开始。", skill_name="guess")
+
+        guess_number = int(command)
+        if guess_number < 1 or guess_number > 100:
+            return SkillResult(text="请输入 1-100 之间的数字。", skill_name="guess")
+
+        state = json.loads(game.state_json or "{}")
+        secret = int(state.get("secret") or 0)
+        attempts = int(state.get("attempts") or 0) + 1
+        state["attempts"] = attempts
+        if guess_number == secret:
+            await ctx.repo.update_game_state(
+                game,
+                state=state,
+                status="won",
+                winner_user_id=ctx.user_id,
+            )
+            await ctx.repo.audit(
+                action="guess_win",
+                actor_user_id=ctx.user_id,
+                group_id=ctx.group_id,
+                target_type="game",
+                target_id="guess",
+                detail={"attempts": attempts},
+            )
+            return SkillResult(text=f"猜对了，答案是 {secret}。共猜了 {attempts} 次。", skill_name="guess")
+
+        await ctx.repo.update_game_state(game, state=state)
+        hint = "大了" if guess_number > secret else "小了"
+        return SkillResult(text=f"{guess_number} {hint}，再试一次。", skill_name="guess")
 
     async def remember(self, args: str, ctx: SkillContext) -> SkillResult:
         content = args.strip()

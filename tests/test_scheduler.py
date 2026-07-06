@@ -114,3 +114,30 @@ async def test_group_task_respects_allowed_groups(session_factory, sender):
     assert sender.group_messages == []
     assert runs[0].status == "failed"
     assert "not allowed" in runs[0].error_message
+
+
+async def test_cleanup_context_task_expires_game_states(repo, sender):
+    await repo.create_guess_game(
+        group_id="10001",
+        user_id="20001",
+        secret=42,
+        expires_in_hours=-1,
+    )
+    await repo.create_scheduled_task(
+        name="清理上下文",
+        task_type="cleanup_context",
+        schedule_type="once",
+        payload={},
+        next_run_at=now_utc() - timedelta(seconds=1),
+        enabled=True,
+        created_by="admin",
+    )
+
+    executed = await run_due_tasks_once(repo, sender, cache=None)
+    runs = await repo.list_task_runs()
+    active_game = await repo.active_game(group_id="10001", game_name="guess")
+
+    assert executed == 1
+    assert active_game is None
+    assert runs[0].status == "success"
+    assert "expired_games=1" in runs[0].result_message

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import delete, func, or_, select
@@ -13,6 +13,7 @@ from app.knowledge import chunk_text, knowledge_score
 from app.models import (
     AuditLog,
     BotReply,
+    GameState,
     Group,
     KeywordRule,
     KnowledgeChunk,
@@ -474,6 +475,13 @@ class Repository:
         scheduled_tasks = await self.session.scalar(
             select(func.count(ScheduledTask.id)).where(ScheduledTask.group_id == group_id)
         )
+        active_games = await self.session.scalar(
+            select(func.count(GameState.id)).where(
+                GameState.group_id == group_id,
+                GameState.status == "active",
+                GameState.expires_at > now_utc(),
+            )
+        )
         return {
             "messages": messages or 0,
             "replies": replies or 0,
@@ -481,7 +489,81 @@ class Repository:
             "knowledge_docs": knowledge_docs or 0,
             "keyword_rules": keyword_rules or 0,
             "scheduled_tasks": scheduled_tasks or 0,
+            "active_games": active_games or 0,
         }
+
+    async def active_game(self, *, group_id: str, game_name: str = "guess") -> GameState | None:
+        await self.expire_game_states()
+        result = await self.session.execute(
+            select(GameState)
+            .where(
+                GameState.group_id == group_id,
+                GameState.game_name == game_name,
+                GameState.status == "active",
+                GameState.expires_at > now_utc(),
+            )
+            .order_by(GameState.id.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    async def create_guess_game(
+        self,
+        *,
+        group_id: str,
+        user_id: str,
+        secret: int,
+        expires_in_hours: int = 24,
+    ) -> GameState:
+        if await self.active_game(group_id=group_id, game_name="guess") is not None:
+            raise ValueError("active guess game already exists")
+        state = GameState(
+            group_id=group_id,
+            game_name="guess",
+            status="active",
+            state_json=json.dumps({"secret": secret, "attempts": 0}, ensure_ascii=False),
+            started_by=user_id,
+            expires_at=now_utc() + timedelta(hours=expires_in_hours),
+        )
+        self.session.add(state)
+        await self.session.flush()
+        return state
+
+    async def update_game_state(
+        self,
+        game: GameState,
+        *,
+        state: dict[str, Any] | None = None,
+        status: str | None = None,
+        winner_user_id: str | None = None,
+    ) -> GameState:
+        if state is not None:
+            game.state_json = json.dumps(state, ensure_ascii=False)
+        if status is not None:
+            game.status = status
+        if winner_user_id is not None:
+            game.winner_user_id = winner_user_id
+        await self.session.flush()
+        return game
+
+    async def stop_active_game(self, *, group_id: str, game_name: str = "guess") -> GameState | None:
+        game = await self.active_game(group_id=group_id, game_name=game_name)
+        if game is None:
+            return None
+        game.status = "stopped"
+        await self.session.flush()
+        return game
+
+    async def expire_game_states(self, now: datetime | None = None) -> int:
+        now = now or now_utc()
+        result = await self.session.execute(
+            select(GameState).where(GameState.status == "active", GameState.expires_at <= now)
+        )
+        expired = list(result.scalars().all())
+        for game in expired:
+            game.status = "expired"
+        await self.session.flush()
+        return len(expired)
 
     async def create_memory(
         self,

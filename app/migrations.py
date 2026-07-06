@@ -96,6 +96,15 @@ async def skill_settings_table(conn: AsyncConnection) -> None:
     await conn.run_sync(create_tables)
 
 
+async def game_states_table(conn: AsyncConnection) -> None:
+    from app.models import GameState
+
+    def create_tables(sync_conn) -> None:
+        GameState.__table__.create(sync_conn, checkfirst=True)
+
+    await conn.run_sync(create_tables)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration("20260706_001_baseline_schema", "Record baseline schema after MVP create_all", baseline_schema),
     Migration(
@@ -112,5 +121,10 @@ MIGRATIONS: tuple[Migration, ...] = (
         "20260706_004_skill_settings",
         "Create global and group skill settings",
         skill_settings_table,
+    ),
+    Migration(
+        "20260706_005_game_states",
+        "Create persistent game state table",
+        game_states_table,
     ),
 )

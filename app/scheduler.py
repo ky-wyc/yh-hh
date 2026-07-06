@@ -80,7 +80,8 @@ async def execute_task(
     if task.task_type == "cleanup_context":
         if cache is not None and hasattr(cache, "clear_contexts"):
             await cache.clear_contexts()
-        return "context_cleanup_done"
+        expired_games = await repo.expire_game_states()
+        return f"context_cleanup_done;expired_games={expired_games}"
     raise ValueError(f"unsupported task_type: {task.task_type}")
 
 

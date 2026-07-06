@@ -164,6 +164,21 @@ class ScheduledTask(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=now_utc, onupdate=now_utc)
 
 
+class GameState(Base):
+    __tablename__ = "game_states"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    group_id: Mapped[str] = mapped_column(String(64), index=True)
+    game_name: Mapped[str] = mapped_column(String(64), index=True)
+    status: Mapped[str] = mapped_column(String(32), default="active", index=True)
+    state_json: Mapped[str] = mapped_column(Text, default="{}")
+    started_by: Mapped[str] = mapped_column(String(64), default="")
+    winner_user_id: Mapped[str] = mapped_column(String(64), default="")
+    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now_utc, onupdate=now_utc)
+
+
 class TaskRun(Base):
     __tablename__ = "task_runs"
 

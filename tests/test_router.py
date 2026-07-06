@@ -4,9 +4,11 @@ import json
 
 import httpx
 
+from app.cache import MemoryRateLimiter
 from app.events import normalize_group_message
 from app.llm import LLMService
 from app.models import User
+from app.repository import Repository
 from app.router import MessageRouter
 
 
@@ -390,6 +392,77 @@ async def test_dice_does_not_call_llm(settings, repo, message_router, sender):
     assert outcome.replied is True
     assert outcome.skill_name == "dice"
     assert "总和" in sender.group_messages[0][1]
+
+
+async def test_guess_game_lifecycle_without_llm(settings, repo, message_router, sender, monkeypatch):
+    monkeypatch.setattr("app.skills.random.randint", lambda start, end: 42)
+    start_event = normalize_group_message(group_event("/guess start", message_id=37), settings)
+    low_event = normalize_group_message(group_event("/guess 40", message_id=38), settings)
+    win_event = normalize_group_message(group_event("/guess 42", message_id=39), settings)
+
+    start = await message_router.handle(start_event, repo, sender)
+    low = await message_router.handle(low_event, repo, sender)
+    win = await message_router.handle(win_event, repo, sender)
+
+    assert start.skill_name == "guess"
+    assert low.skill_name == "guess"
+    assert win.skill_name == "guess"
+    assert "猜数字开始" in sender.group_messages[0][1]
+    assert "40 小了" in sender.group_messages[1][1]
+    assert "猜对了，答案是 42" in sender.group_messages[2][1]
+    assert "API Key" not in "\n".join(message for _, message in sender.group_messages)
+
+
+async def test_guess_game_persists_between_repositories(settings, session_factory, sender, monkeypatch):
+    monkeypatch.setattr("app.skills.random.randint", lambda start, end: 42)
+    async with session_factory() as first_session:
+        first_repo = Repository(first_session, settings)
+        first_router = MessageRouter(settings, LLMService(), MemoryRateLimiter())
+        start_event = normalize_group_message(group_event("/guess start", message_id=40), settings)
+        await first_router.handle(start_event, first_repo, sender)
+        await first_session.commit()
+
+    async with session_factory() as second_session:
+        second_repo = Repository(second_session, settings)
+        second_router = MessageRouter(settings, LLMService(), MemoryRateLimiter())
+        win_event = normalize_group_message(group_event("/guess 42", message_id=41), settings)
+        outcome = await second_router.handle(win_event, second_repo, sender)
+
+    assert outcome.replied is True
+    assert sender.group_messages[-1] == ("10001", "猜对了，答案是 42。共猜了 1 次。")
+
+
+async def test_guess_game_is_group_scoped(settings, repo, message_router, sender, monkeypatch):
+    monkeypatch.setattr("app.skills.random.randint", lambda start, end: 42)
+    await repo.update_bot_settings({"allowed_groups": "10001,20002"})
+    start_event = normalize_group_message(group_event("/guess start", group_id="10001", message_id=42), settings)
+    other_group_event = normalize_group_message(
+        group_event("/guess 42", group_id="20002", message_id=43), settings
+    )
+
+    await message_router.handle(start_event, repo, sender)
+    outcome = await message_router.handle(other_group_event, repo, sender)
+
+    assert outcome.replied is True
+    assert sender.group_messages[-1] == ("20002", "本群没有进行中的猜数字游戏，发送 /guess start 开始。")
+
+
+async def test_guess_game_allows_only_one_active_game_per_group(
+    settings,
+    repo,
+    message_router,
+    sender,
+    monkeypatch,
+):
+    monkeypatch.setattr("app.skills.random.randint", lambda start, end: 42)
+    first_event = normalize_group_message(group_event("/guess start", message_id=44), settings)
+    second_event = normalize_group_message(group_event("/guess start", message_id=45), settings)
+
+    await message_router.handle(first_event, repo, sender)
+    outcome = await message_router.handle(second_event, repo, sender)
+
+    assert outcome.replied is True
+    assert sender.group_messages[-1] == ("10001", "本群已经有进行中的猜数字游戏。")
 
 
 async def test_disabled_command_skill_does_not_execute(settings, repo, message_router, sender):
