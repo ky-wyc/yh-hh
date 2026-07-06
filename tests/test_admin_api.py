@@ -1,14 +1,29 @@
 from __future__ import annotations
 
+from io import BytesIO
+import json
 import time
 
 import pytest
+from openpyxl import Workbook
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from app.config import Settings
 from app.main import create_app
 from app.models import now_utc
+
+
+def build_xlsx_bytes() -> bytes:
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "FAQ"
+    sheet.append(["问题", "答案"])
+    sheet.append(["如何部署", "使用 Docker Compose"])
+    buffer = BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+    return buffer.getvalue()
 
 
 def test_database_timestamp_defaults_are_timezone_naive_utc():
@@ -560,6 +575,55 @@ def test_knowledge_docs_can_be_created_chunked_and_searched_from_admin(tmp_path)
         assert results[0]["title"] == "群规"
         assert "禁止广告" in results[0]["content"]
         assert results[0]["source"] == f"群规#{results[0]['chunk_index'] + 1}"
+
+
+def test_knowledge_docs_can_be_imported_from_xlsx_for_multiple_groups(tmp_path):
+    settings = Settings(
+        DATABASE_URL=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",
+        REDIS_URL="",
+        ADMIN_USERNAME="admin",
+        ADMIN_PASSWORD="secret",
+    )
+    app = create_app(settings)
+
+    with TestClient(app) as client:
+        token = client.post(
+            "/api/auth/login", json={"username": "admin", "password": "secret"}
+        ).json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        client.patch("/api/groups/10001", json={"name": "一群"}, headers=headers)
+        client.patch("/api/groups/10002", json={"name": "二群"}, headers=headers)
+
+        imported = client.post(
+            "/api/knowledge-docs/import",
+            data={
+                "title": "导入 FAQ",
+                "group_ids": json.dumps(["10001", "10002"]),
+                "enabled": "true",
+            },
+            files={
+                "file": (
+                    "faq.xlsx",
+                    build_xlsx_bytes(),
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+            },
+            headers=headers,
+        )
+
+        assert imported.status_code == 200
+        payload = imported.json()
+        assert payload["total"] == 2
+        assert payload["file_type"] == "xlsx"
+        assert {item["group_id"] for item in payload["documents"]} == {"10001", "10002"}
+        assert all(item["title"] == "导入 FAQ" for item in payload["documents"])
+        assert "如何部署 | 使用 Docker Compose" in payload["documents"][0]["content"]
+
+        group_one_docs = client.get("/api/knowledge-docs?group_id=10001", headers=headers)
+        assert group_one_docs.status_code == 200
+        assert group_one_docs.json()[0]["title"] == "导入 FAQ"
+        audit = client.get("/api/audit-logs", headers=headers)
+        assert audit.json()[0]["action"] == "knowledge_docs_import"
 
 
 def test_knowledge_doc_can_be_reindexed_from_admin(tmp_path):

@@ -87,6 +87,49 @@
   </el-card>
 
   <el-card class="toolbar-card">
+    <template #header>导入文档</template>
+    <el-form :model="importForm" label-width="90px" class="knowledge-form">
+      <el-form-item label="作用群">
+        <el-select
+          v-model="importForm.group_ids"
+          multiple
+          filterable
+          clearable
+          placeholder="留空为全局知识"
+        >
+          <el-option
+            v-for="group in groupOptions"
+            :key="group.qq_group_id"
+            :label="group.name ? `${group.name} (${group.qq_group_id})` : group.qq_group_id"
+            :value="group.qq_group_id"
+          />
+        </el-select>
+      </el-form-item>
+      <el-form-item label="标题">
+        <el-input v-model="importForm.title" maxlength="255" show-word-limit placeholder="留空使用文件名" />
+      </el-form-item>
+      <el-form-item label="文件">
+        <el-upload
+          :auto-upload="false"
+          accept=".txt,.md,.csv,.xlsx,.xlsm"
+          :limit="1"
+          :file-list="importFileList"
+          :on-change="selectImportFile"
+          :on-remove="removeImportFile"
+        >
+          <el-button>选择文件</el-button>
+        </el-upload>
+      </el-form-item>
+      <el-form-item label="启用">
+        <el-switch v-model="importForm.enabled" />
+      </el-form-item>
+      <el-form-item>
+        <el-button type="primary" :loading="importing" @click="importDocument">导入知识库</el-button>
+      </el-form-item>
+    </el-form>
+  </el-card>
+
+  <el-card class="toolbar-card">
     <el-form :model="form" label-width="90px" class="knowledge-form">
       <el-form-item label="作用群">
         <el-input v-model="form.group_id" placeholder="留空为全局知识，或填写 QQ 群号" />
@@ -169,6 +212,11 @@ type KnowledgeDocument = {
   updated_at: string
 }
 
+type GroupOption = {
+  qq_group_id: string
+  name: string
+}
+
 type SearchResult = {
   source: string
   content: string
@@ -192,11 +240,13 @@ type ReindexRun = {
 }
 
 const documents = ref<KnowledgeDocument[]>([])
+const groupOptions = ref<GroupOption[]>([])
 const searchResults = ref<SearchResult[]>([])
 const reindexRuns = ref<ReindexRun[]>([])
 const loading = ref(false)
 const historyLoading = ref(false)
 const saving = ref(false)
+const importing = ref(false)
 const searching = ref(false)
 const bulkReindexing = ref(false)
 const retryingFailed = ref(false)
@@ -226,6 +276,14 @@ const form = reactive({
   content: '',
   enabled: true
 })
+
+const importForm = reactive({
+  group_ids: [] as string[],
+  title: '',
+  enabled: true
+})
+const importFile = ref<File | null>(null)
+const importFileList = ref<any[]>([])
 
 function errorText(error: any, fallback: string) {
   const detail = error?.response?.data?.detail
@@ -272,6 +330,15 @@ async function load() {
   }
 }
 
+async function loadGroups() {
+  try {
+    const { data } = await api.get('/groups')
+    groupOptions.value = data
+  } catch (error: any) {
+    ElMessage.error(errorText(error, '加载群列表失败'))
+  }
+}
+
 async function loadReindexRuns() {
   historyLoading.value = true
   try {
@@ -283,6 +350,44 @@ async function loadReindexRuns() {
     ElMessage.error(errorText(error, '加载索引记录失败'))
   } finally {
     historyLoading.value = false
+  }
+}
+
+function selectImportFile(file: any) {
+  importFile.value = file.raw || null
+  importFileList.value = [file]
+}
+
+function removeImportFile() {
+  importFile.value = null
+  importFileList.value = []
+}
+
+async function importDocument() {
+  if (!importFile.value) {
+    ElMessage.warning('请选择要导入的文件')
+    return
+  }
+  importing.value = true
+  try {
+    const payload = new FormData()
+    payload.append('file', importFile.value)
+    payload.append('title', importForm.title.trim())
+    payload.append('group_ids', JSON.stringify(importForm.group_ids))
+    payload.append('enabled', String(importForm.enabled))
+    const { data } = await api.post('/knowledge-docs/import', payload, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    })
+    ElMessage.success(`已导入 ${data.total} 篇知识库文档`)
+    importForm.title = ''
+    importForm.group_ids = []
+    importForm.enabled = true
+    removeImportFile()
+    await load()
+  } catch (error: any) {
+    ElMessage.error(errorText(error, '导入知识库失败'))
+  } finally {
+    importing.value = false
   }
 }
 
@@ -492,7 +597,10 @@ function reindexActionText(action: string, onlyFailed: boolean) {
   return '批量重建'
 }
 
-onMounted(load)
+onMounted(() => {
+  load()
+  loadGroups()
+})
 </script>
 
 <style scoped>

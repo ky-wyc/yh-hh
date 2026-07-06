@@ -315,6 +315,12 @@ class KnowledgeDocumentOut(BaseModel):
     updated_at: str
 
 
+class KnowledgeImportOut(BaseModel):
+    total: int
+    file_type: str
+    documents: list[KnowledgeDocumentOut]
+
+
 class KnowledgeDocumentCreate(BaseModel):
     group_id: str = ""
     title: str

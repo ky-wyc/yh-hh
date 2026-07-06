@@ -4,11 +4,12 @@ import json
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Path, Query, Request, UploadFile
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import login, require_admin
+from app.knowledge_import import parse_imported_knowledge
 from app.repository import Repository
 from app.schemas import (
     BotSettingsOut,
@@ -23,6 +24,7 @@ from app.schemas import (
     KeywordRuleOut,
     KeywordRuleUpdate,
     KnowledgeDocumentCreate,
+    KnowledgeImportOut,
     KnowledgeDocumentOut,
     KnowledgeDocumentUpdate,
     KnowledgeReindexItemOut,
@@ -689,6 +691,81 @@ async def create_knowledge_doc(
     )
     await session.commit()
     return knowledge_document_out(document)
+
+
+def parse_group_ids(value: str) -> list[str]:
+    if not value.strip():
+        return [""]
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        parsed = [item.strip() for item in value.split(",")]
+    if not isinstance(parsed, list):
+        raise HTTPException(status_code=422, detail="group_ids must be a list")
+    group_ids = []
+    for item in parsed:
+        group_id = str(item).strip()
+        if group_id and not group_id.isdigit():
+            raise HTTPException(status_code=422, detail="group_ids must contain numeric ids")
+        if group_id not in group_ids:
+            group_ids.append(group_id)
+    return group_ids or [""]
+
+
+@router.post(
+    "/knowledge-docs/import",
+    response_model=KnowledgeImportOut,
+    dependencies=[Depends(require_admin)],
+)
+async def import_knowledge_doc(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    file: UploadFile = File(...),
+    title: str = Form(default=""),
+    group_ids: str = Form(default=""),
+    enabled: bool = Form(default=True),
+):
+    repo = repo_from(request, session)
+    target_group_ids = parse_group_ids(group_ids)
+    existing_group_ids = {group.qq_group_id for group in await repo.get_groups()}
+    missing_group_ids = [group_id for group_id in target_group_ids if group_id and group_id not in existing_group_ids]
+    if missing_group_ids:
+        raise HTTPException(status_code=404, detail=f"group not found: {', '.join(missing_group_ids)}")
+
+    data = await file.read()
+    try:
+        imported = parse_imported_knowledge(file.filename or "", data, title)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    documents = []
+    for group_id in target_group_ids:
+        document = await repo.create_knowledge_document(
+            group_id=group_id,
+            title=imported.title,
+            content=imported.content,
+            enabled=enabled,
+            created_by="admin",
+        )
+        documents.append(document)
+
+    await repo.audit(
+        action="knowledge_docs_import",
+        target_type="knowledge_doc",
+        target_id="bulk",
+        detail={
+            "file_name": file.filename or "",
+            "file_type": imported.file_type,
+            "group_ids": target_group_ids,
+            "document_count": len(documents),
+        },
+    )
+    await session.commit()
+    return KnowledgeImportOut(
+        total=len(documents),
+        file_type=imported.file_type,
+        documents=[knowledge_document_out(document) for document in documents],
+    )
 
 
 @router.post(
