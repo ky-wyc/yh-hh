@@ -760,6 +760,10 @@ class Repository:
         source_file_name: str = "",
         source_file_path: str = "",
         source_locator: str = "",
+        ai_summary: str = "",
+        ai_keywords: list[str] | None = None,
+        ai_questions: list[str] | None = None,
+        ai_index_status: str = "pending",
     ) -> KnowledgeDocument:
         document = KnowledgeDocument(
             group_id=group_id,
@@ -768,6 +772,10 @@ class Repository:
             source_file_name=source_file_name,
             source_file_path=source_file_path,
             source_locator=source_locator,
+            ai_summary=ai_summary,
+            ai_keywords_json=json.dumps(ai_keywords or [], ensure_ascii=False),
+            ai_questions_json=json.dumps(ai_questions or [], ensure_ascii=False),
+            ai_index_status=ai_index_status,
             enabled=enabled,
             created_by=created_by,
         )
@@ -836,6 +844,10 @@ class Repository:
             "source_file_name",
             "source_file_path",
             "source_locator",
+            "ai_summary",
+            "ai_keywords_json",
+            "ai_questions_json",
+            "ai_index_status",
             "enabled",
         ):
             if key in changes and changes[key] is not None:
@@ -847,6 +859,25 @@ class Repository:
         await self.session.flush()
         if content_changed or scope_changed:
             await self.rebuild_knowledge_chunks(document)
+        return document
+
+    async def update_knowledge_map_by_id(
+        self,
+        document_id: int,
+        *,
+        ai_summary: str,
+        ai_keywords: list[str],
+        ai_questions: list[str],
+        ai_index_status: str,
+    ) -> KnowledgeDocument | None:
+        document = await self.get_knowledge_document_by_id(document_id)
+        if document is None:
+            return None
+        document.ai_summary = ai_summary
+        document.ai_keywords_json = json.dumps(ai_keywords, ensure_ascii=False)
+        document.ai_questions_json = json.dumps(ai_questions, ensure_ascii=False)
+        document.ai_index_status = ai_index_status
+        await self.session.flush()
         return document
 
     async def delete_knowledge_document_by_id(self, document_id: int) -> int:
@@ -963,6 +994,10 @@ class Repository:
                 knowledge_score(query, chunk.content)
                 + knowledge_score(query, chunk.title) * 1.5
                 + knowledge_score(query, document.source_file_name) * 0.5
+                + knowledge_score(query, document.source_locator) * 0.8
+                + knowledge_score(query, document.ai_summary) * 2.0
+                + knowledge_score(query, document.ai_keywords_json) * 2.5
+                + knowledge_score(query, document.ai_questions_json) * 1.2
                 + max(vector_score, 0.0) * 10.0
             )
             if score <= 0:

@@ -67,6 +67,26 @@ async def test_knowledge_search_uses_vectorized_chunks(repo):
     assert results[0].score > 0
 
 
+async def test_knowledge_search_uses_ai_map_keywords(repo):
+    await repo.create_knowledge_document(
+        group_id="10001",
+        title="库存说明",
+        content="这段正文只写普通库存注意事项。",
+        enabled=True,
+        created_by="admin",
+        ai_summary="包含特殊物料的目录摘要",
+        ai_keywords=["ZX-900", "冷链物料"],
+        ai_questions=["ZX-900 应该如何处理？"],
+        ai_index_status="local",
+    )
+
+    results = await repo.search_knowledge(group_id="10001", query="ZX-900", limit=3)
+
+    assert results
+    assert results[0].title == "库存说明"
+    assert results[0].score > 0
+
+
 def test_keyword_score_prioritizes_exact_identifiers():
     exact = knowledge_score("SKU-205", "Row 206\nSku: SKU-205\nName: Item 205")
     loose = knowledge_score("SKU-205", "Row 6\nSku: SKU-005\nName: Item 5")

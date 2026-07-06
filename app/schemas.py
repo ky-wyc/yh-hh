@@ -315,6 +315,10 @@ class KnowledgeDocumentOut(BaseModel):
     source_file_name: str
     source_file_path: str
     source_locator: str
+    ai_summary: str
+    ai_keywords: list[str]
+    ai_questions: list[str]
+    ai_index_status: str
     enabled: bool
     index_status: str
     index_error: str

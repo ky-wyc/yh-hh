@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import login, require_admin
 from app.knowledge_import import parse_imported_knowledge
+from app.knowledge_map import build_knowledge_map
 from app.repository import Repository
 from app.schemas import (
     BotSettingsOut,
@@ -114,6 +115,8 @@ def memory_out(memory) -> MemoryOut:
 
 
 def knowledge_document_out(document) -> KnowledgeDocumentOut:
+    ai_keywords = safe_json_list(document.ai_keywords_json)
+    ai_questions = safe_json_list(document.ai_questions_json)
     return KnowledgeDocumentOut(
         id=document.id,
         group_id=document.group_id,
@@ -122,6 +125,10 @@ def knowledge_document_out(document) -> KnowledgeDocumentOut:
         source_file_name=document.source_file_name,
         source_file_path=document.source_file_path,
         source_locator=document.source_locator,
+        ai_summary=document.ai_summary,
+        ai_keywords=ai_keywords,
+        ai_questions=ai_questions,
+        ai_index_status=document.ai_index_status,
         enabled=document.enabled,
         index_status=document.index_status,
         index_error=document.index_error,
@@ -130,6 +137,16 @@ def knowledge_document_out(document) -> KnowledgeDocumentOut:
         created_at=document.created_at.isoformat(),
         updated_at=document.updated_at.isoformat(),
     )
+
+
+def safe_json_list(raw: str | None) -> list[str]:
+    try:
+        payload = json.loads(raw or "[]")
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(payload, list):
+        return []
+    return [str(item) for item in payload if str(item).strip()]
 
 
 def knowledge_reindex_run_out(record) -> KnowledgeReindexRunOut:
@@ -696,19 +713,33 @@ async def create_knowledge_doc(
     session: AsyncSession = Depends(get_session),
 ):
     repo = repo_from(request, session)
+    knowledge_map = await build_knowledge_map(
+        repo,
+        request.app.state.llm,
+        title=payload.title,
+        content=payload.content,
+    )
     document = await repo.create_knowledge_document(
         group_id=payload.group_id,
         title=payload.title,
         content=payload.content,
         enabled=payload.enabled,
         created_by="admin",
+        ai_summary=knowledge_map.summary,
+        ai_keywords=knowledge_map.keywords,
+        ai_questions=knowledge_map.questions,
+        ai_index_status=knowledge_map.status,
     )
     await repo.audit(
         action="knowledge_doc_create",
         group_id=document.group_id,
         target_type="knowledge_doc",
         target_id=str(document.id),
-        detail={"source": "admin", "chunk_count": document.chunk_count},
+        detail={
+            "source": "admin",
+            "chunk_count": document.chunk_count,
+            "ai_index_status": document.ai_index_status,
+        },
     )
     await session.commit()
     return knowledge_document_out(document)
@@ -761,9 +792,20 @@ async def import_knowledge_doc(
     source_file_name = file.filename or imported.report.file_name
     source_file_path = save_knowledge_file(request, source_file_name, data)
 
+    knowledge_maps = [
+        await build_knowledge_map(
+            repo,
+            request.app.state.llm,
+            title=imported_document.title,
+            content=imported_document.content,
+            source_locator=imported_document.locator,
+        )
+        for imported_document in imported.documents
+    ]
     documents = []
+    ai_map_status_counts: dict[str, int] = {}
     for group_id in target_group_ids:
-        for imported_document in imported.documents:
+        for imported_document, knowledge_map in zip(imported.documents, knowledge_maps, strict=True):
             document = await repo.create_knowledge_document(
                 group_id=group_id,
                 title=imported_document.title,
@@ -773,7 +815,12 @@ async def import_knowledge_doc(
                 source_file_name=source_file_name,
                 source_file_path=source_file_path,
                 source_locator=imported_document.locator,
+                ai_summary=knowledge_map.summary,
+                ai_keywords=knowledge_map.keywords,
+                ai_questions=knowledge_map.questions,
+                ai_index_status=knowledge_map.status,
             )
+            ai_map_status_counts[document.ai_index_status] = ai_map_status_counts.get(document.ai_index_status, 0) + 1
             documents.append(document)
 
     await repo.audit(
@@ -787,6 +834,7 @@ async def import_knowledge_doc(
             "group_ids": target_group_ids,
             "document_count": len(documents),
             "source_document_count": len(imported.documents),
+            "ai_map_status_counts": ai_map_status_counts,
             "report": {
                 "source_count": imported.report.source_count,
                 "row_count": imported.report.row_count,
@@ -972,6 +1020,23 @@ async def update_knowledge_doc(
     document = await repo.update_knowledge_document_by_id(document_id, changes)
     if document is None:
         raise HTTPException(status_code=404, detail="knowledge document not found")
+    if any(key in changes for key in ("title", "content", "source_locator")):
+        knowledge_map = await build_knowledge_map(
+            repo,
+            request.app.state.llm,
+            title=document.title,
+            content=document.content,
+            source_locator=document.source_locator,
+        )
+        document = await repo.update_knowledge_map_by_id(
+            document.id,
+            ai_summary=knowledge_map.summary,
+            ai_keywords=knowledge_map.keywords,
+            ai_questions=knowledge_map.questions,
+            ai_index_status=knowledge_map.status,
+        )
+        if document is None:
+            raise HTTPException(status_code=404, detail="knowledge document not found")
     await repo.audit(
         action="knowledge_doc_update",
         group_id=document.group_id,
@@ -1039,6 +1104,53 @@ async def reindex_knowledge_doc(
             "index_error": document.index_error,
         },
         result="success" if succeeded else "failed",
+    )
+    await session.commit()
+    return knowledge_document_out(document)
+
+
+@router.post(
+    "/knowledge-docs/{document_id}/map",
+    response_model=KnowledgeDocumentOut,
+    dependencies=[Depends(require_admin)],
+)
+async def rebuild_knowledge_doc_map(
+    document_id: Annotated[int, Path(ge=1)],
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    repo = repo_from(request, session)
+    document = await repo.get_knowledge_document_by_id(document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="knowledge document not found")
+    knowledge_map = await build_knowledge_map(
+        repo,
+        request.app.state.llm,
+        title=document.title,
+        content=document.content,
+        source_locator=document.source_locator,
+    )
+    document = await repo.update_knowledge_map_by_id(
+        document.id,
+        ai_summary=knowledge_map.summary,
+        ai_keywords=knowledge_map.keywords,
+        ai_questions=knowledge_map.questions,
+        ai_index_status=knowledge_map.status,
+    )
+    if document is None:
+        raise HTTPException(status_code=404, detail="knowledge document not found")
+    await repo.audit(
+        action="knowledge_doc_map_rebuild",
+        group_id=document.group_id,
+        target_type="knowledge_doc",
+        target_id=str(document.id),
+        detail={
+            "source": "admin",
+            "ai_index_status": document.ai_index_status,
+            "keyword_count": len(safe_json_list(document.ai_keywords_json)),
+            "question_count": len(safe_json_list(document.ai_questions_json)),
+        },
+        result="success" if document.ai_index_status in {"ai", "local"} else "failed",
     )
     await session.commit()
     return knowledge_document_out(document)

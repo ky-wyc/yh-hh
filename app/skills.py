@@ -144,9 +144,40 @@ class SkillRegistry:
         query = args.strip()
         if not query:
             return SkillResult(text=f"用法：{ctx.command_prefix}kb 你的问题", skill_name="kb")
-        results = await ctx.repo.search_knowledge(group_id=ctx.group_id, query=query, limit=3)
+        results = await ctx.repo.search_knowledge(group_id=ctx.group_id, query=query, limit=5)
         if not results:
             return SkillResult(text="知识库里没有找到相关资料。", skill_name="kb")
+        context_lines = []
+        for index, item in enumerate(results[:5], start=1):
+            snippet = item.content
+            if len(snippet) > 900:
+                snippet = snippet[:900].rstrip() + "..."
+            context_lines.append(f"[{index}] Source: {item.source}\n{snippet}")
+        prompt = "\n\n".join(
+            [
+                "User question:",
+                query,
+                "Knowledge snippets:",
+                "\n\n".join(context_lines),
+                (
+                    "Answer in Chinese. Use only the knowledge snippets. If the snippets are "
+                    "insufficient, say the knowledge base does not contain enough information. "
+                    "Include source names briefly."
+                ),
+            ]
+        )
+        llm_config = await ctx.repo.get_llm_config()
+        if llm_config.api_key:
+            result = await ctx.llm.complete(
+                ctx.repo,
+                prompt,
+                system_prompt="You answer QQ group knowledge-base questions strictly from provided snippets.",
+                group_id=ctx.group_id,
+                user_id=ctx.user_id,
+                skill_name="kb_answer",
+            )
+            if result.status == "success" and result.text.strip():
+                return SkillResult(text=result.text.strip(), skill_name="kb", llm_model=result.model)
         lines = ["知识库结果："]
         for index, item in enumerate(results, start=1):
             snippet = item.content

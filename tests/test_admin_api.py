@@ -643,6 +643,9 @@ def test_knowledge_docs_can_be_imported_from_xlsx_for_multiple_groups(tmp_path):
         assert all((tmp_path / "knowledge_files").joinpath(Path(item["source_file_path"]).name).exists() for item in payload["documents"])
         assert "Question: Deploy" in payload["documents"][0]["content"]
         assert "Answer: Use Docker Compose" in payload["documents"][0]["content"]
+        assert payload["documents"][0]["ai_index_status"] == "local"
+        assert payload["documents"][0]["ai_summary"]
+        assert payload["documents"][0]["ai_keywords"]
 
         group_one_docs = client.get("/api/knowledge-docs?group_id=10001", headers=headers)
         assert group_one_docs.status_code == 200
@@ -790,6 +793,43 @@ def test_knowledge_doc_can_be_reindexed_from_admin(tmp_path):
         assert history.json()[0]["total"] == 1
         assert history.json()[0]["succeeded"] == 1
         assert history.json()[0]["failed"] == 0
+
+
+def test_knowledge_doc_map_can_be_rebuilt_from_admin(tmp_path):
+    settings = Settings(
+        DATABASE_URL=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",
+        REDIS_URL="",
+        ADMIN_USERNAME="admin",
+        ADMIN_PASSWORD="secret",
+    )
+    app = create_app(settings)
+
+    with TestClient(app) as client:
+        token = client.post(
+            "/api/auth/login", json={"username": "admin", "password": "secret"}
+        ).json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        created = client.post(
+            "/api/knowledge-docs",
+            json={
+                "group_id": "10001",
+                "title": "目录测试",
+                "content": "SKU-777 使用冷链运输。",
+                "enabled": True,
+            },
+            headers=headers,
+        ).json()
+
+        rebuilt = client.post(f"/api/knowledge-docs/{created['id']}/map", headers=headers)
+
+        assert rebuilt.status_code == 200
+        payload = rebuilt.json()
+        assert payload["ai_index_status"] == "local"
+        assert payload["ai_summary"]
+        assert "sku-777" in payload["ai_keywords"]
+        audit = client.get("/api/audit-logs", headers=headers)
+        assert audit.json()[0]["action"] == "knowledge_doc_map_rebuild"
 
 
 def test_knowledge_reindex_runs_can_be_cleared_from_admin(tmp_path):

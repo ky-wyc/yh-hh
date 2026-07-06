@@ -186,6 +186,19 @@
     <el-table-column prop="title" label="标题" min-width="180" />
     <el-table-column prop="source_file_name" label="来源文件" min-width="180" show-overflow-tooltip />
     <el-table-column prop="source_locator" label="来源位置" min-width="160" show-overflow-tooltip />
+    <el-table-column label="AI目录" width="110">
+      <template #default="{ row }">
+        <el-tag :type="row.ai_index_status === 'ai' ? 'success' : 'info'">
+          {{ row.ai_index_status || '-' }}
+        </el-tag>
+      </template>
+    </el-table-column>
+    <el-table-column prop="ai_summary" label="结构化摘要" min-width="220" show-overflow-tooltip />
+    <el-table-column label="关键词" min-width="180" show-overflow-tooltip>
+      <template #default="{ row }">
+        {{ row.ai_keywords?.slice(0, 8).join('、') || '-' }}
+      </template>
+    </el-table-column>
     <el-table-column label="启用" width="100">
       <template #default="{ row }">
         <el-switch v-model="row.enabled" @change="toggleDocument(row)" />
@@ -203,9 +216,18 @@
     <el-table-column prop="updated_at" label="更新时间" width="190">
       <template #default="{ row }">{{ formatTime(row.updated_at) }}</template>
     </el-table-column>
-    <el-table-column label="操作" width="250" fixed="right">
+    <el-table-column label="操作" width="340" fixed="right">
       <template #default="{ row }">
         <el-button size="small" @click="editDocument(row)">编辑</el-button>
+        <el-button
+          size="small"
+          type="success"
+          plain
+          :loading="isRebuildingMap(row.id)"
+          @click="rebuildDocumentMap(row)"
+        >
+          重建目录
+        </el-button>
         <el-button size="small" type="primary" plain @click="reindexDocument(row)">重建索引</el-button>
         <el-button size="small" type="danger" plain @click="deleteDocument(row)">删除</el-button>
       </template>
@@ -226,6 +248,10 @@ type KnowledgeDocument = {
   source_file_name: string
   source_file_path: string
   source_locator: string
+  ai_summary: string
+  ai_keywords: string[]
+  ai_questions: string[]
+  ai_index_status: string
   enabled: boolean
   index_status: string
   index_error: string
@@ -289,6 +315,7 @@ const bulkReindexing = ref(false)
 const retryingFailed = ref(false)
 const queueingReindex = ref(false)
 const queueingFailed = ref(false)
+const rebuildingMaps = ref<Set<number>>(new Set())
 const editingId = ref<number | null>(null)
 const bulkResult = ref<{
   total: number
@@ -541,6 +568,25 @@ async function reindexDocument(document: KnowledgeDocument) {
     await load()
   } catch (error: any) {
     ElMessage.error(errorText(error, '重建索引失败'))
+  }
+}
+
+function isRebuildingMap(documentId: number) {
+  return rebuildingMaps.value.has(documentId)
+}
+
+async function rebuildDocumentMap(document: KnowledgeDocument) {
+  rebuildingMaps.value = new Set([...rebuildingMaps.value, document.id])
+  try {
+    await api.post(`/knowledge-docs/${document.id}/map`)
+    ElMessage.success('已重建 AI 目录')
+    await load()
+  } catch (error: any) {
+    ElMessage.error(errorText(error, '重建 AI 目录失败'))
+  } finally {
+    const next = new Set(rebuildingMaps.value)
+    next.delete(document.id)
+    rebuildingMaps.value = next
   }
 }
 

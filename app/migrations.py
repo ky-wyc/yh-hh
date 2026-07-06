@@ -138,6 +138,29 @@ async def knowledge_file_metadata(conn: AsyncConnection) -> None:
     )
 
 
+async def knowledge_ai_map_metadata(conn: AsyncConnection) -> None:
+    await add_column_if_missing(
+        conn,
+        "knowledge_documents",
+        "ai_summary TEXT DEFAULT ''",
+    )
+    await add_column_if_missing(
+        conn,
+        "knowledge_documents",
+        "ai_keywords_json TEXT DEFAULT '[]'",
+    )
+    await add_column_if_missing(
+        conn,
+        "knowledge_documents",
+        "ai_questions_json TEXT DEFAULT '[]'",
+    )
+    await add_column_if_missing(
+        conn,
+        "knowledge_documents",
+        "ai_index_status VARCHAR(32) DEFAULT 'pending'",
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration("20260706_001_baseline_schema", "Record baseline schema after MVP create_all", baseline_schema),
     Migration(
@@ -169,5 +192,10 @@ MIGRATIONS: tuple[Migration, ...] = (
         "20260706_007_knowledge_file_metadata",
         "Store source file metadata for imported knowledge documents",
         knowledge_file_metadata,
+    ),
+    Migration(
+        "20260706_008_knowledge_ai_map_metadata",
+        "Store AI generated knowledge map metadata",
+        knowledge_ai_map_metadata,
     ),
 )

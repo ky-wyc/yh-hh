@@ -87,6 +87,59 @@ class LLMService:
         )
         return LLMResult(text=text, model=config.model)
 
+    async def complete(
+        self,
+        repo: Repository,
+        prompt: str,
+        *,
+        system_prompt: str,
+        group_id: str = "",
+        user_id: str = "",
+        skill_name: str = "llm_complete",
+    ) -> LLMResult:
+        config = await repo.get_llm_config()
+        if not config.api_key:
+            await repo.save_llm_usage(
+                config=config,
+                group_id=group_id,
+                user_id=user_id,
+                skill_name=skill_name,
+                status="missing_api_key",
+            )
+            return LLMResult(text="", model=config.model, status="missing_api_key")
+
+        started = time.perf_counter()
+        try:
+            text, prompt_tokens, completion_tokens = await self._call_openai_compatible(
+                config,
+                prompt,
+                system_prompt,
+            )
+        except Exception as exc:
+            latency_ms = int((time.perf_counter() - started) * 1000)
+            await repo.save_llm_usage(
+                config=config,
+                group_id=group_id,
+                user_id=user_id,
+                skill_name=skill_name,
+                latency_ms=latency_ms,
+                status="failed",
+                error_message=str(exc),
+            )
+            return LLMResult(text="", model=config.model, status="failed")
+
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        await repo.save_llm_usage(
+            config=config,
+            group_id=group_id,
+            user_id=user_id,
+            skill_name=skill_name,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            latency_ms=latency_ms,
+        )
+        return LLMResult(text=text, model=config.model)
+
     async def _call_openai_compatible(
         self,
         config: LLMConfig,
