@@ -8,12 +8,16 @@ import httpx
 from app.repository import LLMConfig, Repository
 
 
-SYSTEM_PROMPT = """你是一个 QQ 群机器人助手。
+SYSTEM_PROMPT_TEMPLATE = """你在 QQ 群里聊天。
+你的名字是「{bot_name}」。
+群友也可能用这些名字称呼你：{bot_aliases}。
 要求：
 1. 回复简洁、友好、具体。
 2. 不确定时说明不确定，不要编造。
 3. 不参与骚扰、诈骗、绕过平台限制、泄露隐私或危险行为。
 4. 群聊里避免刷屏，长答案先给摘要。
+5. 当介绍自己或被问到你是谁时，使用「{bot_name}」这个名字。
+6. 不要自称“机器人”“AI”“语言模型”或“助手”，除非用户明确询问技术实现。
 """
 
 
@@ -50,7 +54,13 @@ class LLMService:
 
         started = time.perf_counter()
         try:
-            text, prompt_tokens, completion_tokens = await self._call_openai_compatible(config, prompt)
+            bot_settings = await repo.get_bot_settings()
+            system_prompt = build_system_prompt(bot_settings.bot_nickname_list)
+            text, prompt_tokens, completion_tokens = await self._call_openai_compatible(
+                config,
+                prompt,
+                system_prompt,
+            )
         except Exception as exc:
             latency_ms = int((time.perf_counter() - started) * 1000)
             await repo.save_llm_usage(
@@ -76,7 +86,12 @@ class LLMService:
         )
         return LLMResult(text=text, model=config.model)
 
-    async def _call_openai_compatible(self, config: LLMConfig, prompt: str) -> tuple[str, int, int]:
+    async def _call_openai_compatible(
+        self,
+        config: LLMConfig,
+        prompt: str,
+        system_prompt: str,
+    ) -> tuple[str, int, int]:
         close_client = False
         client = self.client
         if client is None:
@@ -91,7 +106,7 @@ class LLMService:
                     "temperature": config.temperature,
                     "max_tokens": config.max_tokens,
                     "messages": [
-                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "system", "content": system_prompt},
                         {"role": "user", "content": prompt},
                     ],
                 },
@@ -107,3 +122,9 @@ class LLMService:
             if close_client:
                 await client.aclose()
 
+
+def build_system_prompt(bot_nicknames: list[str]) -> str:
+    names = [name.strip() for name in bot_nicknames if name.strip()]
+    bot_name = names[0] if names else "助手"
+    bot_aliases = "、".join(names) if names else bot_name
+    return SYSTEM_PROMPT_TEMPLATE.format(bot_name=bot_name, bot_aliases=bot_aliases)

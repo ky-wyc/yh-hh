@@ -296,6 +296,41 @@ async def test_ai_success_uses_openai_compatible_endpoint(settings, repo, messag
     assert sender.group_messages == [("10001", "hello from model")]
 
 
+async def test_ai_system_prompt_uses_runtime_bot_nickname(settings, repo, message_router, sender):
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads((await request.aread()).decode("utf-8"))
+        system_prompt = payload["messages"][0]["content"]
+        assert "你的名字是「小灵」" in system_prompt
+        assert "群友也可能用这些名字称呼你：小灵、小Q" in system_prompt
+        assert "不要自称“机器人”“AI”“语言模型”" in system_prompt
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": "我是小灵。"}}],
+                "usage": {"prompt_tokens": 5, "completion_tokens": 3},
+            },
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://llm.test")
+    llm = LLMService(client)
+    router = MessageRouter(settings, llm, message_router.rate_limiter)
+    await repo.update_bot_settings({"bot_nicknames": "小灵,小Q"})
+    await repo.update_llm_config(
+        {
+            "base_url": "https://llm.test/v1",
+            "api_key": "test-key",
+            "model": "test-model",
+        }
+    )
+    event = normalize_group_message(group_event("/ai 你是谁", message_id=29), settings)
+
+    outcome = await router.handle(event, repo, sender)
+
+    await client.aclose()
+    assert outcome.replied is True
+    assert sender.group_messages == [("10001", "我是小灵。")]
+
+
 async def test_dice_does_not_call_llm(settings, repo, message_router, sender):
     event = normalize_group_message(group_event("/dice 2d6", message_id=3), settings)
 
