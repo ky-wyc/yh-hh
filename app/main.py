@@ -41,6 +41,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             settings=settings,
             sender=app.state.onebot,
             cache=app.state.rate_limiter,
+            llm=app.state.llm,
         )
         app.state.task_scheduler.start()
         try:

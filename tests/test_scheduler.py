@@ -72,6 +72,47 @@ async def test_daily_summary_summarizes_recent_group_messages(repo, sender):
     assert "今天讨论部署" in summary
 
 
+async def test_memory_summary_task_creates_pending_memory(repo, sender):
+    await repo.save_message(
+        group_id="10001",
+        user_id="20001",
+        message_id="mem1",
+        dedup_key="mem1",
+        content="Please remember that this group prefers concise deployment answers.",
+        raw_event={},
+    )
+    await repo.save_message(
+        group_id="10001",
+        user_id="20002",
+        message_id="mem2",
+        dedup_key="mem2",
+        content="We usually discuss the QQBot rollout in this group.",
+        raw_event={},
+    )
+    await repo.create_scheduled_task(
+        name="chat memory summary",
+        task_type="memory_summarize",
+        schedule_type="interval",
+        group_id="10001",
+        payload={"hours": 24, "limit": 20},
+        next_run_at=now_utc() - timedelta(seconds=1),
+        interval_seconds=3600,
+        enabled=True,
+        created_by="admin",
+    )
+
+    executed = await run_due_tasks_once(repo, sender, cache=None)
+
+    memories = await repo.list_memories_for_admin(status="pending", group_id="10001")
+    runs = await repo.list_task_runs()
+    assert executed == 1
+    assert len(memories) == 1
+    assert memories[0].source == "scheduled_chat_summary"
+    assert memories[0].status == "pending"
+    assert "QQBot rollout" in memories[0].content
+    assert "memory_summary_pending" in runs[0].result_message
+
+
 async def test_group_task_does_not_send_when_group_is_disabled(repo, sender):
     await repo.update_group("10001", enabled=False)
     await repo.create_scheduled_task(

@@ -23,6 +23,7 @@
         <el-select v-model="form.task_type" @change="applyTaskDefaults">
           <el-option label="群提醒" value="reminder_once" />
           <el-option label="每日总结" value="daily_summary" />
+          <el-option label="聊天记忆总结" value="memory_summarize" />
           <el-option label="清理上下文" value="cleanup_context" />
           <el-option label="知识库重建" value="knowledge_reindex" />
         </el-select>
@@ -35,7 +36,19 @@
         </el-select>
       </el-form-item>
       <el-form-item v-if="showsGroup" label="目标群号">
-        <el-input v-model="form.group_id" :placeholder="requiresGroup ? '填写 QQ 群号' : '留空处理全部'" />
+        <el-select
+          v-model="form.group_id"
+          filterable
+          clearable
+          :placeholder="requiresGroup ? '选择 QQ 群' : '留空处理全部'"
+        >
+          <el-option
+            v-for="group in groupOptions"
+            :key="group.qq_group_id"
+            :label="group.name ? `${group.name} (${group.qq_group_id})` : group.qq_group_id"
+            :value="group.qq_group_id"
+          />
+        </el-select>
       </el-form-item>
       <el-form-item label="下次运行">
         <el-date-picker
@@ -59,6 +72,12 @@
       </el-form-item>
       <el-form-item v-if="form.task_type === 'daily_summary'" label="统计小时">
         <el-input-number v-model="form.hours" :min="1" :max="168" :step="1" />
+      </el-form-item>
+      <el-form-item v-if="form.task_type === 'memory_summarize'" label="统计小时">
+        <el-input-number v-model="form.hours" :min="1" :max="168" :step="1" />
+      </el-form-item>
+      <el-form-item v-if="form.task_type === 'memory_summarize'" label="消息上限">
+        <el-input-number v-model="form.limit" :min="5" :max="200" :step="5" />
       </el-form-item>
       <el-form-item label="启用">
         <el-switch v-model="form.enabled" />
@@ -160,8 +179,14 @@ type TaskRun = {
   finished_at: string | null
 }
 
+type GroupOption = {
+  qq_group_id: string
+  name: string
+}
+
 const tasks = ref<ScheduledTask[]>([])
 const runs = ref<TaskRun[]>([])
+const groupOptions = ref<GroupOption[]>([])
 const loading = ref(false)
 const runsLoading = ref(false)
 const saving = ref(false)
@@ -180,11 +205,12 @@ const form = reactive({
   interval_seconds: 3600,
   message: '',
   hours: 24,
+  limit: 50,
   enabled: true
 })
 
-const requiresGroup = computed(() => ['reminder_once', 'daily_summary'].includes(form.task_type))
-const showsGroup = computed(() => ['reminder_once', 'daily_summary', 'knowledge_reindex'].includes(form.task_type))
+const requiresGroup = computed(() => ['reminder_once', 'daily_summary', 'memory_summarize'].includes(form.task_type))
+const showsGroup = computed(() => ['reminder_once', 'daily_summary', 'memory_summarize', 'knowledge_reindex'].includes(form.task_type))
 
 function errorText(error: any, fallback: string) {
   const detail = error?.response?.data?.detail
@@ -232,6 +258,9 @@ function buildPayload() {
   if (form.task_type === 'daily_summary') {
     return { hours: form.hours }
   }
+  if (form.task_type === 'memory_summarize') {
+    return { hours: form.hours, limit: form.limit }
+  }
   if (form.task_type === 'knowledge_reindex') {
     return { only_failed: false, include_disabled: false, limit: 100 }
   }
@@ -266,6 +295,15 @@ async function loadRuns(taskId?: number) {
   }
 }
 
+async function loadGroups() {
+  try {
+    const { data } = await api.get('/groups')
+    groupOptions.value = data
+  } catch (error: any) {
+    ElMessage.error(errorText(error, '加载群列表失败'))
+  }
+}
+
 function resetFilter() {
   filters.group_id = ''
   loadTasks()
@@ -281,13 +319,15 @@ function resetForm() {
   form.interval_seconds = 3600
   form.message = ''
   form.hours = 24
+  form.limit = 50
   form.enabled = true
 }
 
 function applyTaskDefaults() {
-  if (form.task_type === 'daily_summary') {
+  if (form.task_type === 'daily_summary' || form.task_type === 'memory_summarize') {
     form.schedule_type = 'daily'
     form.hours = form.hours || 24
+    form.limit = form.limit || 50
   }
   if (form.task_type === 'cleanup_context') {
     form.group_id = ''
@@ -339,6 +379,7 @@ function editTask(task: ScheduledTask) {
   form.interval_seconds = task.interval_seconds || 3600
   form.message = String(task.payload?.message || '')
   form.hours = Number(task.payload?.hours || 24)
+  form.limit = Number(task.payload?.limit || 50)
   form.enabled = task.enabled
   window.scrollTo({ top: 0, behavior: 'smooth' })
 }
@@ -378,6 +419,7 @@ function taskTypeText(value: string) {
   const labels: Record<string, string> = {
     reminder_once: '群提醒',
     daily_summary: '每日总结',
+    memory_summarize: '聊天记忆总结',
     cleanup_context: '清理上下文',
     knowledge_reindex: '知识库重建'
   }
@@ -401,6 +443,7 @@ function formatTime(value: string | null) {
 onMounted(() => {
   loadTasks()
   loadRuns()
+  loadGroups()
 })
 </script>
 

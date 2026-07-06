@@ -8,6 +8,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.cache import BotCache
+from app.llm import LLMService
 from app.models import ScheduledTask, now_utc
 from app.repository import Repository
 
@@ -20,14 +21,19 @@ def task_payload(task: ScheduledTask) -> dict[str, Any]:
         return {}
 
 
-async def run_due_tasks_once(repo: Repository, sender: Any, cache: BotCache | None) -> int:
+async def run_due_tasks_once(
+    repo: Repository,
+    sender: Any,
+    cache: BotCache | None,
+    llm: LLMService | None = None,
+) -> int:
     now = now_utc()
     tasks = await repo.due_scheduled_tasks(now)
     executed = 0
     for task in tasks:
         started_at = now_utc()
         try:
-            result_message = await execute_task(repo, sender, cache, task)
+            result_message = await execute_task(repo, sender, cache, task, llm=llm)
             mark_task_success(task)
             await repo.create_task_run(
                 task_id=task.id,
@@ -59,6 +65,8 @@ async def execute_task(
     sender: Any,
     cache: BotCache | None,
     task: ScheduledTask,
+    *,
+    llm: LLMService | None = None,
 ) -> str:
     payload = task_payload(task)
     if task.task_type == "reminder_once":
@@ -82,6 +90,32 @@ async def execute_task(
             await cache.clear_contexts()
         expired_games = await repo.expire_game_states()
         return f"context_cleanup_done;expired_games={expired_games}"
+    if task.task_type == "memory_summarize":
+        if not task.group_id:
+            raise ValueError("group_id is required for memory summary")
+        await ensure_group_enabled(repo, task.group_id)
+        hours = max(1, min(int(payload.get("hours") or 24), 168))
+        limit = max(5, min(int(payload.get("limit") or 50), 200))
+        content = await build_memory_candidate(repo, llm, task.group_id, hours, limit)
+        if not content:
+            return "memory_summary_skipped;messages=0"
+        memory = await repo.create_memory(
+            group_id=task.group_id,
+            user_id="",
+            content=content[:2000],
+            source="scheduled_chat_summary",
+            confidence=0.6,
+            status="pending",
+            created_by="scheduler",
+        )
+        await repo.audit(
+            action="memory_summary_create_pending",
+            group_id=task.group_id,
+            target_type="memory",
+            target_id=str(memory.id),
+            detail={"source": "scheduler", "task_id": task.id, "hours": hours, "limit": limit},
+        )
+        return f"memory_summary_pending;memory_id={memory.id}"
     if task.task_type == "knowledge_reindex":
         only_failed = bool(payload.get("only_failed", False))
         include_disabled = bool(payload.get("include_disabled", False))
@@ -159,6 +193,60 @@ async def build_daily_summary(repo: Repository, group_id: str, hours: int) -> st
     )
 
 
+async def build_memory_candidate(
+    repo: Repository,
+    llm: LLMService | None,
+    group_id: str,
+    hours: int,
+    limit: int,
+) -> str:
+    since = now_utc() - timedelta(hours=hours)
+    messages = await repo.recent_group_messages(group_id, since, limit=limit)
+    if not messages:
+        return ""
+    sample_lines = []
+    for message in messages:
+        content = message.content.strip().replace("\n", " ")
+        if not content:
+            continue
+        if len(content) > 180:
+            content = content[:180].rstrip() + "..."
+        sample_lines.append(f"{message.user_id}: {content}")
+    if not sample_lines:
+        return ""
+
+    config = await repo.get_llm_config()
+    if llm is not None and config.api_key:
+        prompt = "\n".join(
+            [
+                "请把下面 QQ 群聊天整理成一条待审核的长期记忆候选。",
+                "要求：只总结稳定偏好、群内规则、长期项目事实或反复出现的重要信息。",
+                "不要记录临时闲聊、一次性情绪、隐私密钥、密码、联系方式或不确定事实。",
+                "输出 1 到 5 条短句，用分号分隔，不要解释。",
+                "",
+                "群聊片段：",
+                *sample_lines,
+            ]
+        )
+        result = await llm.chat(
+            repo,
+            prompt,
+            group_id=group_id,
+            user_id="",
+            skill_name="memory_summary",
+        )
+        text = result.text.strip()
+        if text:
+            return text[:2000]
+
+    return "\n".join(
+        [
+            f"群 {group_id} 最近 {hours} 小时聊天摘要候选：",
+            *sample_lines[-10:],
+        ]
+    )[:2000]
+
+
 def mark_task_success(task: ScheduledTask) -> None:
     task.last_run_at = now_utc()
     advance_next_run(task)
@@ -186,12 +274,14 @@ class TaskScheduler:
         settings,
         sender: Any,
         cache: BotCache | None,
+        llm: LLMService | None = None,
         interval_seconds: float = 30,
     ):
         self.session_factory = session_factory
         self.settings = settings
         self.sender = sender
         self.cache = cache
+        self.llm = llm
         self.interval_seconds = interval_seconds
         self._task: asyncio.Task | None = None
         self._stop = asyncio.Event()
@@ -222,7 +312,7 @@ class TaskScheduler:
         async with self.session_factory() as session:
             repo = Repository(session, self.settings)
             try:
-                executed = await run_due_tasks_once(repo, self.sender, self.cache)
+                executed = await run_due_tasks_once(repo, self.sender, self.cache, llm=self.llm)
                 await session.commit()
                 return executed
             except Exception:

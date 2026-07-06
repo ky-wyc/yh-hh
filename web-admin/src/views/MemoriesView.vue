@@ -12,7 +12,14 @@
         </el-select>
       </el-form-item>
       <el-form-item label="群号">
-        <el-input v-model="filters.group_id" clearable placeholder="留空查看全部" />
+        <el-select v-model="filters.group_id" filterable clearable placeholder="留空查看全部">
+          <el-option
+            v-for="group in groupOptions"
+            :key="group.qq_group_id"
+            :label="group.name ? `${group.name} (${group.qq_group_id})` : group.qq_group_id"
+            :value="group.qq_group_id"
+          />
+        </el-select>
       </el-form-item>
       <el-form-item label="用户 QQ">
         <el-input v-model="filters.user_id" clearable placeholder="留空查看全部" />
@@ -27,7 +34,14 @@
   <el-card class="toolbar-card">
     <el-form :model="form" label-width="90px" class="memory-form">
       <el-form-item label="作用群">
-        <el-input v-model="form.group_id" placeholder="留空为全局记忆，或填写 QQ 群号" />
+        <el-select v-model="form.group_id" filterable clearable placeholder="留空为全局记忆">
+          <el-option
+            v-for="group in groupOptions"
+            :key="group.qq_group_id"
+            :label="group.name ? `${group.name} (${group.qq_group_id})` : group.qq_group_id"
+            :value="group.qq_group_id"
+          />
+        </el-select>
       </el-form-item>
       <el-form-item label="用户 QQ">
         <el-input v-model="form.user_id" placeholder="留空为群/全局记忆" />
@@ -110,7 +124,13 @@ type Memory = {
   updated_at: string
 }
 
+type GroupOption = {
+  qq_group_id: string
+  name: string
+}
+
 const memories = ref<Memory[]>([])
+const groupOptions = ref<GroupOption[]>([])
 const loading = ref(false)
 const saving = ref(false)
 const editingId = ref<number | null>(null)
@@ -174,6 +194,15 @@ async function load() {
     ElMessage.error(errorText(error, '加载记忆失败'))
   } finally {
     loading.value = false
+  }
+}
+
+async function loadGroups() {
+  try {
+    const { data } = await api.get('/groups')
+    groupOptions.value = data
+  } catch (error: any) {
+    ElMessage.error(errorText(error, '加载群列表失败'))
   }
 }
 
@@ -297,7 +326,10 @@ function formatTime(value: string) {
   return value.replace('T', ' ').slice(0, 19)
 }
 
-onMounted(load)
+onMounted(() => {
+  load()
+  loadGroups()
+})
 </script>
 
 <style scoped>
