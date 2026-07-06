@@ -105,6 +105,21 @@ async def game_states_table(conn: AsyncConnection) -> None:
     await conn.run_sync(create_tables)
 
 
+async def knowledge_pgvector_support(conn: AsyncConnection) -> None:
+    if conn.dialect.name != "postgresql":
+        return
+    try:
+        async with conn.begin_nested():
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            await add_column_if_missing(
+                conn,
+                "knowledge_chunks",
+                "embedding_vector vector(64)",
+            )
+    except Exception:
+        return
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration("20260706_001_baseline_schema", "Record baseline schema after MVP create_all", baseline_schema),
     Migration(
@@ -126,5 +141,10 @@ MIGRATIONS: tuple[Migration, ...] = (
         "20260706_005_game_states",
         "Create persistent game state table",
         game_states_table,
+    ),
+    Migration(
+        "20260706_006_knowledge_pgvector_support",
+        "Enable pgvector column for knowledge chunks when available",
+        knowledge_pgvector_support,
     ),
 )

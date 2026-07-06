@@ -465,7 +465,7 @@ def test_knowledge_docs_can_be_created_chunked_and_searched_from_admin(tmp_path)
         document = created.json()
         assert document["title"] == "群规"
         assert document["chunk_count"] >= 1
-        assert document["index_status"] == "completed"
+        assert document["index_status"] == "vectorized"
 
         listed = client.get("/api/knowledge-docs?group_id=10001", headers=headers)
         assert listed.status_code == 200
@@ -513,7 +513,7 @@ def test_knowledge_doc_can_be_reindexed_from_admin(tmp_path):
 
         assert reindexed.status_code == 200
         payload = reindexed.json()
-        assert payload["index_status"] == "completed"
+        assert payload["index_status"] == "vectorized"
         assert payload["chunk_count"] >= 1
         audit = client.get("/api/audit-logs", headers=headers)
         assert audit.json()[0]["action"] == "knowledge_doc_reindex"

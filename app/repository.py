@@ -5,11 +5,11 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import delete, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, parse_csv
-from app.knowledge import chunk_text, knowledge_score
+from app.knowledge import cosine_similarity, chunk_text, embed_text, knowledge_score, vector_literal
 from app.models import (
     AuditLog,
     BotReply,
@@ -763,24 +763,61 @@ class Repository:
         await self.session.execute(delete(KnowledgeChunk).where(KnowledgeChunk.document_id == document.id))
         try:
             chunks = chunk_text(document.content)
+            chunk_records: list[tuple[KnowledgeChunk, list[float]]] = []
             for index, content in enumerate(chunks):
-                self.session.add(
-                    KnowledgeChunk(
-                        document_id=document.id,
-                        group_id=document.group_id,
-                        title=document.title,
-                        chunk_index=index,
-                        content=content,
-                    )
+                embedding = embed_text(content)
+                chunk = KnowledgeChunk(
+                    document_id=document.id,
+                    group_id=document.group_id,
+                    title=document.title,
+                    chunk_index=index,
+                    content=content,
+                    embedding_json=json.dumps(embedding, ensure_ascii=False),
                 )
+                self.session.add(chunk)
+                chunk_records.append((chunk, embedding))
             document.chunk_count = len(chunks)
-            document.index_status = "completed"
+            document.index_status = "vectorized"
             document.index_error = ""
+            await self.session.flush()
+            await self._store_pgvector_embeddings(chunk_records)
         except Exception as exc:
             document.chunk_count = 0
             document.index_status = "failed"
             document.index_error = str(exc)[:1000]
         await self.session.flush()
+
+    async def _store_pgvector_embeddings(
+        self,
+        chunks: list[tuple[KnowledgeChunk, list[float]]],
+    ) -> None:
+        bind = self.session.get_bind()
+        if bind.dialect.name != "postgresql" or not chunks:
+            return
+        try:
+            async with self.session.begin_nested():
+                await self.session.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+                await self.session.execute(
+                    text(
+                        """
+                        ALTER TABLE knowledge_chunks
+                        ADD COLUMN IF NOT EXISTS embedding_vector vector(64)
+                        """
+                    )
+                )
+                for chunk, embedding in chunks:
+                    await self.session.execute(
+                        text(
+                            """
+                            UPDATE knowledge_chunks
+                            SET embedding_vector = (:embedding)::vector
+                            WHERE id = :chunk_id
+                            """
+                        ),
+                        {"embedding": vector_literal(embedding), "chunk_id": chunk.id},
+                    )
+        except Exception:
+            return
 
     async def search_knowledge(
         self,
@@ -794,13 +831,15 @@ class Repository:
             .join(KnowledgeDocument, KnowledgeDocument.id == KnowledgeChunk.document_id)
             .where(
                 KnowledgeDocument.enabled.is_(True),
-                KnowledgeDocument.index_status == "completed",
+                KnowledgeDocument.index_status.in_(["completed", "vectorized"]),
                 or_(KnowledgeChunk.group_id == "", KnowledgeChunk.group_id == group_id),
             )
         )
+        query_embedding = embed_text(query)
         ranked: list[KnowledgeSearchResult] = []
         for chunk, document in result.all():
-            score = knowledge_score(query, chunk.content)
+            vector_score = cosine_similarity(query_embedding, self._chunk_embedding(chunk))
+            score = knowledge_score(query, chunk.content) + max(vector_score, 0.0) * 10.0
             if score <= 0:
                 continue
             ranked.append(
@@ -816,6 +855,16 @@ class Repository:
             )
         ranked.sort(key=lambda item: item.score, reverse=True)
         return ranked[:limit]
+
+    @staticmethod
+    def _chunk_embedding(chunk: KnowledgeChunk) -> list[float]:
+        try:
+            embedding = json.loads(chunk.embedding_json or "[]")
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(embedding, list):
+            return []
+        return [float(value) for value in embedding if isinstance(value, int | float)]
 
     async def create_scheduled_task(
         self,

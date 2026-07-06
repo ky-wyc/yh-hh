@@ -77,11 +77,12 @@
     <el-table-column prop="chunk_count" label="分块数" width="90" />
     <el-table-column label="索引状态" width="120">
       <template #default="{ row }">
-        <el-tag :type="row.index_status === 'completed' ? 'success' : 'danger'">
+        <el-tag :type="isHealthyIndex(row.index_status) ? 'success' : 'danger'">
           {{ row.index_status }}
         </el-tag>
       </template>
     </el-table-column>
+    <el-table-column prop="index_error" label="索引错误" min-width="180" show-overflow-tooltip />
     <el-table-column prop="updated_at" label="更新时间" width="190">
       <template #default="{ row }">{{ formatTime(row.updated_at) }}</template>
     </el-table-column>
@@ -303,6 +304,10 @@ async function searchKnowledge() {
 function formatTime(value: string) {
   if (!value) return '-'
   return value.replace('T', ' ').slice(0, 19)
+}
+
+function isHealthyIndex(value: string) {
+  return value === 'completed' || value === 'vectorized'
 }
 
 onMounted(load)
