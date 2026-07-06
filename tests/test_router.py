@@ -392,6 +392,38 @@ async def test_dice_does_not_call_llm(settings, repo, message_router, sender):
     assert "总和" in sender.group_messages[0][1]
 
 
+async def test_disabled_command_skill_does_not_execute(settings, repo, message_router, sender):
+    await repo.set_skill_enabled(skill_name="dice", group_id="10001", enabled=False, updated_by="admin")
+    event = normalize_group_message(group_event("/dice 2d6", message_id=34), settings)
+
+    outcome = await message_router.handle(event, repo, sender)
+
+    assert outcome.replied is True
+    assert outcome.reason == "skill_disabled"
+    assert outcome.skill_name == "dice"
+    assert sender.group_messages == [("10001", "该功能已关闭：dice")]
+
+
+async def test_disabled_ai_skill_suppresses_mention_reply(settings, repo, message_router, sender):
+    await repo.set_skill_enabled(skill_name="ai", group_id="10001", enabled=False, updated_by="admin")
+    event = normalize_group_message(
+        group_segment_event(
+            [
+                {"type": "at", "data": {"qq": "123456"}},
+                {"type": "text", "data": {"text": " hello"}},
+            ],
+            message_id=35,
+        ),
+        settings,
+    )
+
+    outcome = await message_router.handle(event, repo, sender)
+
+    assert outcome.replied is False
+    assert outcome.reason == "no_trigger"
+    assert sender.group_messages == []
+
+
 async def test_ordinary_user_cannot_warn(settings, repo, message_router, sender):
     event = normalize_group_message(group_event("/warn @someone noisy", message_id=4), settings)
 
@@ -554,3 +586,14 @@ async def test_help_uses_configured_command_prefix(settings, repo, message_route
     assert outcome.replied is True
     assert "!ping" in sender.group_messages[0][1]
     assert "/ping" not in sender.group_messages[0][1]
+
+
+async def test_help_hides_disabled_skills(settings, repo, message_router, sender):
+    await repo.set_skill_enabled(skill_name="ai", group_id="10001", enabled=False, updated_by="admin")
+    event = normalize_group_message(group_event("/help", message_id=36), settings)
+
+    outcome = await message_router.handle(event, repo, sender)
+
+    assert outcome.replied is True
+    assert "/ping" in sender.group_messages[0][1]
+    assert "/ai" not in sender.group_messages[0][1]

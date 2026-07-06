@@ -88,6 +88,19 @@ class KeywordRule(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now_utc)
 
 
+class SkillSetting(Base):
+    __tablename__ = "skill_settings"
+    __table_args__ = (UniqueConstraint("group_id", "skill_name", name="uq_skill_group"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    group_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    skill_name: Mapped[str] = mapped_column(String(64), index=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    updated_by: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now_utc, onupdate=now_utc)
+
+
 class MemoryRecord(Base):
     __tablename__ = "memory_records"
 

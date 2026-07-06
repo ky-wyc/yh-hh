@@ -533,6 +533,59 @@ def test_scheduled_tasks_can_be_managed_from_admin(tmp_path):
         assert deleted.json()["deleted"] is True
 
 
+def test_skill_settings_and_group_detail_can_be_managed_from_admin(tmp_path):
+    settings = Settings(
+        DATABASE_URL=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",
+        REDIS_URL="",
+        ADMIN_USERNAME="admin",
+        ADMIN_PASSWORD="secret",
+    )
+    app = create_app(settings)
+
+    with TestClient(app) as client:
+        token = client.post(
+            "/api/auth/login", json={"username": "admin", "password": "secret"}
+        ).json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        await_group = client.patch(
+            "/api/groups/10001",
+            json={"enabled": True, "reply_mode": "mention_only", "name": "测试群"},
+            headers=headers,
+        )
+        global_ai = client.patch(
+            "/api/skills/ai",
+            json={"enabled": False, "group_id": ""},
+            headers=headers,
+        )
+        group_dice = client.patch(
+            "/api/skills/dice",
+            json={"enabled": False, "group_id": "10001"},
+            headers=headers,
+        )
+        skills = client.get("/api/skills?group_id=10001", headers=headers)
+        detail = client.get("/api/groups/10001", headers=headers)
+
+        assert await_group.status_code == 200
+        assert global_ai.status_code == 200
+        assert global_ai.json()["effective_enabled"] is False
+        assert group_dice.status_code == 200
+        assert group_dice.json()["group_enabled"] is False
+        assert skills.status_code == 200
+        skill_map = {item["skill_name"]: item for item in skills.json()}
+        assert skill_map["ai"]["global_enabled"] is False
+        assert skill_map["ai"]["effective_enabled"] is False
+        assert skill_map["dice"]["group_enabled"] is False
+        assert skill_map["dice"]["effective_enabled"] is False
+        assert detail.status_code == 200
+        assert detail.json()["name"] == "测试群"
+        assert "messages" in detail.json()["overview"]
+        assert any(item["skill_name"] == "dice" for item in detail.json()["skills"])
+
+        audit = client.get("/api/audit-logs", headers=headers)
+        assert audit.json()[0]["action"] == "skill_setting_update"
+
+
 def test_group_update_rejects_invalid_reply_mode(tmp_path):
     settings = Settings(
         DATABASE_URL=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",

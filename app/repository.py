@@ -22,6 +22,7 @@ from app.models import (
     MessageLog,
     ScheduledTask,
     Setting,
+    SkillSetting,
     TaskRun,
     User,
     now_utc,
@@ -122,6 +123,10 @@ class Repository:
     async def get_groups(self) -> list[Group]:
         result = await self.session.execute(select(Group).order_by(Group.qq_group_id))
         return list(result.scalars().all())
+
+    async def get_group_by_qq_id(self, qq_group_id: str) -> Group | None:
+        result = await self.session.execute(select(Group).where(Group.qq_group_id == qq_group_id))
+        return result.scalar_one_or_none()
 
     async def update_group(self, qq_group_id: str, **changes: Any) -> Group:
         group = await self.ensure_group(qq_group_id)
@@ -394,6 +399,89 @@ class Repository:
             if rule.keyword and rule.keyword in content:
                 return rule
         return None
+
+    async def get_skill_setting(self, *, skill_name: str, group_id: str = "") -> SkillSetting | None:
+        result = await self.session.execute(
+            select(SkillSetting).where(
+                SkillSetting.group_id == group_id,
+                SkillSetting.skill_name == skill_name,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def set_skill_enabled(
+        self,
+        *,
+        skill_name: str,
+        enabled: bool,
+        group_id: str = "",
+        updated_by: str = "",
+    ) -> SkillSetting:
+        setting = await self.get_skill_setting(skill_name=skill_name, group_id=group_id)
+        if setting is None:
+            setting = SkillSetting(
+                skill_name=skill_name,
+                group_id=group_id,
+                enabled=enabled,
+                updated_by=updated_by,
+            )
+            self.session.add(setting)
+        else:
+            setting.enabled = enabled
+            setting.updated_by = updated_by
+        await self.session.flush()
+        return setting
+
+    async def skill_settings_for_group(self, group_id: str) -> dict[str, bool | None]:
+        result = await self.session.execute(select(SkillSetting).where(SkillSetting.group_id == group_id))
+        return {item.skill_name: item.enabled for item in result.scalars().all()}
+
+    async def effective_skill_enabled(self, *, skill_name: str, group_id: str) -> bool:
+        global_setting = await self.get_skill_setting(skill_name=skill_name, group_id="")
+        if global_setting is not None and not global_setting.enabled:
+            return False
+        group_setting = await self.get_skill_setting(skill_name=skill_name, group_id=group_id)
+        if group_setting is not None:
+            return group_setting.enabled
+        return True
+
+    async def enabled_skill_names(self, group_id: str, skill_names: list[str]) -> set[str]:
+        enabled = set()
+        for skill_name in skill_names:
+            if await self.effective_skill_enabled(skill_name=skill_name, group_id=group_id):
+                enabled.add(skill_name)
+        return enabled
+
+    async def group_overview(self, group_id: str) -> dict[str, int]:
+        messages = await self.session.scalar(
+            select(func.count(MessageLog.id)).where(MessageLog.group_id == group_id)
+        )
+        replies = await self.session.scalar(
+            select(func.count(BotReply.id)).where(BotReply.group_id == group_id)
+        )
+        memories = await self.session.scalar(
+            select(func.count(MemoryRecord.id)).where(
+                MemoryRecord.group_id == group_id,
+                MemoryRecord.status != "deleted",
+            )
+        )
+        knowledge_docs = await self.session.scalar(
+            select(func.count(KnowledgeDocument.id)).where(KnowledgeDocument.group_id == group_id)
+        )
+        keyword_rules = await self.session.scalar(
+            select(func.count(KeywordRule.id)).where(KeywordRule.group_id == group_id)
+        )
+        scheduled_tasks = await self.session.scalar(
+            select(func.count(ScheduledTask.id)).where(ScheduledTask.group_id == group_id)
+        )
+        return {
+            "messages": messages or 0,
+            "replies": replies or 0,
+            "memories": memories or 0,
+            "knowledge_docs": knowledge_docs or 0,
+            "keyword_rules": keyword_rules or 0,
+            "scheduled_tasks": scheduled_tasks or 0,
+        }
 
     async def create_memory(
         self,

@@ -81,6 +81,28 @@ class MessageRouter:
         command = self._parse_command(event.text, bot_settings.command_prefix)
         if command:
             name, args = command
+            skill_name = self.skills.command_skill_name(name)
+            enabled_skills = await repo.enabled_skill_names(event.group_id, self.skills.skill_names)
+            if skill_name is not None and skill_name not in enabled_skills:
+                text = f"该功能已关闭：{skill_name}"
+                if not await self._send_group_reply(event, message_log, repo, sender, text):
+                    return RouteOutcome(status="error", reason="send_failed")
+                await repo.save_reply(
+                    group_id=event.group_id,
+                    user_id=event.user_id,
+                    trigger_type="command_disabled",
+                    input_message_id=event.message_id,
+                    content=text,
+                    skill_name=skill_name,
+                )
+                await repo.mark_message(message_log, "handled", f"skill_disabled:{skill_name}")
+                return RouteOutcome(
+                    status="handled",
+                    reason="skill_disabled",
+                    replied=True,
+                    reply_text=text,
+                    skill_name=skill_name,
+                )
             recent_context = await self.rate_limiter.get_context(event.group_id)
             result = await self.skills.dispatch(
                 name,
@@ -93,6 +115,7 @@ class MessageRouter:
                     message_id=event.message_id,
                     command_prefix=bot_settings.command_prefix,
                     recent_context=recent_context,
+                    enabled_skills=enabled_skills,
                 ),
             )
             if not await self._send_group_reply(event, message_log, repo, sender, result.text):
@@ -114,7 +137,11 @@ class MessageRouter:
                 skill_name=result.skill_name,
             )
 
-        keyword_hit = await repo.find_keyword_hit(event.group_id, event.text)
+        admin_lite_enabled = await repo.effective_skill_enabled(
+            skill_name="admin-lite",
+            group_id=event.group_id,
+        )
+        keyword_hit = await repo.find_keyword_hit(event.group_id, event.text) if admin_lite_enabled else None
         if keyword_hit:
             if not await self._send_group_reply(
                 event, message_log, repo, sender, keyword_hit.response
@@ -141,7 +168,8 @@ class MessageRouter:
             or self._has_runtime_at(event.text, bot_qq)
             or any(name and name in event.text for name in bot_settings.bot_nickname_list)
         )
-        if at_bot and group.reply_mode in {"mention_only", "active"}:
+        ai_enabled = await repo.effective_skill_enabled(skill_name="ai", group_id=event.group_id)
+        if at_bot and group.reply_mode in {"mention_only", "active"} and ai_enabled:
             prompt = self._remove_bot_mentions(event.text, bot_qq, bot_settings.bot_nickname_list) or event.text
             context = await self.rate_limiter.get_context(event.group_id)
             prompt_with_context = self._with_context(prompt, context)
@@ -171,7 +199,7 @@ class MessageRouter:
                 skill_name="ai",
             )
 
-        if group.reply_mode == "active" and self._looks_like_question(event.text):
+        if group.reply_mode == "active" and ai_enabled and self._looks_like_question(event.text):
             context = await self.rate_limiter.get_context(event.group_id)
             prompt_with_context = self._with_context(event.text, context)
             llm_result = await self.llm.chat(

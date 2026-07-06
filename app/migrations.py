@@ -87,6 +87,15 @@ async def scheduled_task_tables(conn: AsyncConnection) -> None:
     await conn.run_sync(create_tables)
 
 
+async def skill_settings_table(conn: AsyncConnection) -> None:
+    from app.models import SkillSetting
+
+    def create_tables(sync_conn) -> None:
+        SkillSetting.__table__.create(sync_conn, checkfirst=True)
+
+    await conn.run_sync(create_tables)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration("20260706_001_baseline_schema", "Record baseline schema after MVP create_all", baseline_schema),
     Migration(
@@ -98,5 +107,10 @@ MIGRATIONS: tuple[Migration, ...] = (
         "20260706_003_scheduled_tasks",
         "Record scheduled task and task run tables",
         scheduled_task_tables,
+    ),
+    Migration(
+        "20260706_004_skill_settings",
+        "Create global and group skill settings",
+        skill_settings_table,
     ),
 )

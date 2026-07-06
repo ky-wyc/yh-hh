@@ -8,6 +8,29 @@ from app.llm import LLMService
 from app.repository import Repository
 
 
+SKILL_CATALOG: dict[str, dict[str, str]] = {
+    "help": {"display_name": "帮助", "description": "查看机器人可用命令。"},
+    "ping": {"display_name": "健康检查", "description": "检查机器人是否在线。"},
+    "ai": {"display_name": "AI 问答", "description": "大模型聊天、@ 回复和主动回答。"},
+    "kb": {"display_name": "知识库", "description": "查询后台维护的群知识库。"},
+    "dice": {"display_name": "掷骰子", "description": "娱乐掷骰子命令。"},
+    "memory": {"display_name": "长期记忆", "description": "手动记住和忘记待审核记忆。"},
+    "admin-lite": {"display_name": "基础群管", "description": "警告、关键词拦截和轻量群管命令。"},
+}
+
+COMMAND_SKILLS: dict[str, str] = {
+    "help": "help",
+    "ping": "ping",
+    "ai": "ai",
+    "kb": "kb",
+    "dice": "dice",
+    "remember": "memory",
+    "forget": "memory",
+    "warn": "admin-lite",
+    "banword": "admin-lite",
+}
+
+
 @dataclass(slots=True)
 class SkillContext:
     repo: Repository
@@ -17,6 +40,7 @@ class SkillContext:
     message_id: str = ""
     command_prefix: str = "/"
     recent_context: list[str] | None = None
+    enabled_skills: set[str] | None = None
 
 
 @dataclass(slots=True)
@@ -44,6 +68,13 @@ class SkillRegistry:
     def names(self) -> list[str]:
         return sorted(self._handlers)
 
+    @property
+    def skill_names(self) -> list[str]:
+        return sorted(SKILL_CATALOG)
+
+    def command_skill_name(self, command_name: str) -> str | None:
+        return COMMAND_SKILLS.get(command_name)
+
     async def dispatch(self, name: str, args: str, ctx: SkillContext) -> SkillResult:
         handler = self._handlers.get(name)
         if handler is None:
@@ -55,20 +86,25 @@ class SkillRegistry:
 
     async def help(self, args: str, ctx: SkillContext) -> SkillResult:
         prefix = ctx.command_prefix
-        text = "\n".join(
-            [
-                "可用命令：",
-                f"{prefix}help - 查看帮助",
-                f"{prefix}ping - 健康检查",
-                f"{prefix}ai 问题 - 向大模型提问",
-                f"{prefix}kb 问题 - 查询知识库",
-                f"{prefix}dice 或 {prefix}dice 2d6 - 掷骰子",
-                f"{prefix}remember 内容 - 记录待审核记忆",
-                f"{prefix}forget 记忆ID - 删除自己的记忆",
-                f"{prefix}warn @用户 原因 - 管理员警告",
-                f"{prefix}banword add/remove/list - 关键词拦截",
-            ]
-        )
+        enabled = ctx.enabled_skills if ctx.enabled_skills is not None else set(SKILL_CATALOG)
+        lines = ["可用命令："]
+        if "help" in enabled:
+            lines.append(f"{prefix}help - 查看帮助")
+        if "ping" in enabled:
+            lines.append(f"{prefix}ping - 健康检查")
+        if "ai" in enabled:
+            lines.append(f"{prefix}ai 问题 - 向大模型提问")
+        if "kb" in enabled:
+            lines.append(f"{prefix}kb 问题 - 查询知识库")
+        if "dice" in enabled:
+            lines.append(f"{prefix}dice 或 {prefix}dice 2d6 - 掷骰子")
+        if "memory" in enabled:
+            lines.append(f"{prefix}remember 内容 - 记录待审核记忆")
+            lines.append(f"{prefix}forget 记忆ID - 删除自己的记忆")
+        if "admin-lite" in enabled:
+            lines.append(f"{prefix}warn @用户 原因 - 管理员警告")
+            lines.append(f"{prefix}banword add/remove/list - 关键词拦截")
+        text = "\n".join(lines)
         return SkillResult(text=text, skill_name="help")
 
     async def ping(self, args: str, ctx: SkillContext) -> SkillResult:

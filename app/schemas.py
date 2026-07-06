@@ -36,6 +36,37 @@ class GroupUpdate(BaseModel):
         return value
 
 
+class SkillSettingOut(BaseModel):
+    skill_name: str
+    display_name: str
+    description: str
+    global_enabled: bool
+    group_enabled: bool | None = None
+    effective_enabled: bool
+
+
+class SkillSettingUpdate(BaseModel):
+    enabled: bool
+    group_id: str = ""
+
+    @field_validator("group_id")
+    @classmethod
+    def validate_group_id(cls, value: str) -> str:
+        stripped = value.strip()
+        if stripped and not stripped.isdigit():
+            raise ValueError("group_id must be numeric or empty for global skill settings")
+        return stripped
+
+
+class GroupDetailOut(BaseModel):
+    qq_group_id: str
+    name: str
+    enabled: bool
+    reply_mode: str
+    overview: dict[str, int]
+    skills: list[SkillSettingOut]
+
+
 class KeywordRuleOut(BaseModel):
     id: int
     group_id: str

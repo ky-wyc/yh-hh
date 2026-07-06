@@ -14,6 +14,7 @@ from app.schemas import (
     BotSettingsOut,
     BotSettingsUpdate,
     GroupUpdate,
+    GroupDetailOut,
     KeywordRuleCreate,
     KeywordRuleOut,
     KeywordRuleUpdate,
@@ -32,8 +33,11 @@ from app.schemas import (
     ScheduledTaskCreate,
     ScheduledTaskOut,
     ScheduledTaskUpdate,
+    SkillSettingOut,
+    SkillSettingUpdate,
     TaskRunOut,
 )
+from app.skills import SKILL_CATALOG
 
 router = APIRouter(prefix="/api")
 
@@ -153,6 +157,23 @@ def audit_safe_detail(value):
     return value
 
 
+async def skill_setting_out(repo: Repository, skill_name: str, group_id: str = "") -> SkillSettingOut:
+    catalog = SKILL_CATALOG[skill_name]
+    global_setting = await repo.get_skill_setting(skill_name=skill_name, group_id="")
+    group_setting = await repo.get_skill_setting(skill_name=skill_name, group_id=group_id) if group_id else None
+    global_enabled = True if global_setting is None else global_setting.enabled
+    group_enabled = None if group_setting is None else group_setting.enabled
+    effective_enabled = await repo.effective_skill_enabled(skill_name=skill_name, group_id=group_id)
+    return SkillSettingOut(
+        skill_name=skill_name,
+        display_name=catalog["display_name"],
+        description=catalog["description"],
+        global_enabled=global_enabled,
+        group_enabled=group_enabled,
+        effective_enabled=effective_enabled,
+    )
+
+
 @router.post("/auth/login", response_model=LoginResponse)
 async def auth_login(request: Request, payload: LoginRequest) -> LoginResponse:
     token = login(
@@ -218,6 +239,30 @@ async def list_groups(request: Request, session: AsyncSession = Depends(get_sess
     ]
 
 
+@router.get(
+    "/groups/{qq_group_id}",
+    response_model=GroupDetailOut,
+    dependencies=[Depends(require_admin)],
+)
+async def get_group_detail(
+    qq_group_id: Annotated[str, Path(pattern=r"^\d+$")],
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    repo = repo_from(request, session)
+    group = await repo.get_group_by_qq_id(qq_group_id)
+    if group is None:
+        raise HTTPException(status_code=404, detail="group not found")
+    return GroupDetailOut(
+        qq_group_id=group.qq_group_id,
+        name=group.name,
+        enabled=group.enabled,
+        reply_mode=group.reply_mode,
+        overview=await repo.group_overview(qq_group_id),
+        skills=[await skill_setting_out(repo, name, qq_group_id) for name in sorted(SKILL_CATALOG)],
+    )
+
+
 @router.patch("/groups/{qq_group_id}", dependencies=[Depends(require_admin)])
 async def patch_group(
     qq_group_id: Annotated[str, Path(pattern=r"^\d+$")],
@@ -240,6 +285,48 @@ async def patch_group(
         "enabled": group.enabled,
         "reply_mode": group.reply_mode,
     }
+
+
+@router.get("/skills", response_model=list[SkillSettingOut], dependencies=[Depends(require_admin)])
+async def list_skills(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    group_id: str | None = Query(default=None, pattern=r"^\d*$"),
+):
+    repo = repo_from(request, session)
+    scope = group_id or ""
+    return [await skill_setting_out(repo, name, scope) for name in sorted(SKILL_CATALOG)]
+
+
+@router.patch(
+    "/skills/{skill_name}",
+    response_model=SkillSettingOut,
+    dependencies=[Depends(require_admin)],
+)
+async def update_skill_setting(
+    skill_name: str,
+    payload: SkillSettingUpdate,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    if skill_name not in SKILL_CATALOG:
+        raise HTTPException(status_code=404, detail="skill not found")
+    repo = repo_from(request, session)
+    setting = await repo.set_skill_enabled(
+        skill_name=skill_name,
+        group_id=payload.group_id,
+        enabled=payload.enabled,
+        updated_by="admin",
+    )
+    await repo.audit(
+        action="skill_setting_update",
+        group_id=setting.group_id,
+        target_type="skill",
+        target_id=skill_name,
+        detail={"enabled": setting.enabled, "scope": "group" if setting.group_id else "global"},
+    )
+    await session.commit()
+    return await skill_setting_out(repo, skill_name, setting.group_id)
 
 
 @router.get("/keyword-rules", response_model=list[KeywordRuleOut], dependencies=[Depends(require_admin)])
