@@ -31,6 +31,14 @@ case "$POSTGRES_DB_VALUE" in
 esac
 
 STAMP="$(date +%Y%m%d-%H%M%S)"
-docker compose exec -T postgres pg_dump -U "$POSTGRES_USER_VALUE" "$POSTGRES_DB_VALUE" > "$BACKUP_DIR/postgres-$STAMP.sql"
+BACKUP_FILE="$BACKUP_DIR/postgres-$STAMP.sql"
+docker compose exec -T postgres pg_dump -U "$POSTGRES_USER_VALUE" "$POSTGRES_DB_VALUE" > "$BACKUP_FILE"
 
-echo "Backup written to $BACKUP_DIR/postgres-$STAMP.sql"
+if [ ! -s "$BACKUP_FILE" ]; then
+  echo "Backup file is empty: $BACKUP_FILE" >&2
+  exit 1
+fi
+
+chmod 600 "$BACKUP_FILE" 2>/dev/null || true
+
+echo "Backup written to $BACKUP_FILE"

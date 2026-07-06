@@ -72,6 +72,7 @@ def test_ops_scripts_keep_strict_preflight_and_identifier_guards():
     deploy = (ROOT / "scripts/deploy_mvp.sh").read_text(encoding="utf-8")
     backup = (ROOT / "scripts/backup.sh").read_text(encoding="utf-8")
     restore = (ROOT / "scripts/restore_postgres.sh").read_text(encoding="utf-8")
+    drill = (ROOT / "scripts/backup_restore_drill.py").read_text(encoding="utf-8")
 
     assert 'STRICT_PREFLIGHT="${STRICT_PREFLIGHT:-0}"' in deploy
     assert 'ONEBOT_ADAPTER="${ONEBOT_ADAPTER:-napcat}"' in deploy
@@ -88,6 +89,9 @@ def test_ops_scripts_keep_strict_preflight_and_identifier_guards():
     for script in (backup, restore):
         assert "POSTGRES_USER must contain only letters, numbers, and underscores" in script
         assert "POSTGRES_DB must contain only letters, numbers, and underscores" in script
+    assert 'chmod 600 "$BACKUP_FILE"' in backup
+    assert '"restore_executed": False' in drill
+    assert "restore_postgres.sh" in drill
 
 
 def test_generated_lagrange_config_matches_production_env_defaults(tmp_path):
