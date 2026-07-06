@@ -109,16 +109,18 @@
         <el-input v-model="importForm.title" maxlength="255" show-word-limit placeholder="留空使用文件名" />
       </el-form-item>
       <el-form-item label="文件">
-        <el-upload
-          :auto-upload="false"
-          accept=".txt,.md,.csv,.xlsx,.xlsm"
-          :limit="1"
-          :file-list="importFileList"
-          :on-change="selectImportFile"
-          :on-remove="removeImportFile"
-        >
-          <el-button>选择文件</el-button>
-        </el-upload>
+        <div class="file-picker">
+          <input
+            ref="importFileInput"
+            class="file-input"
+            type="file"
+            accept=".txt,.md,.csv,.xlsx,.xlsm"
+            @change="selectImportFile"
+          />
+          <el-button native-type="button" @click="openImportFilePicker">选择文件</el-button>
+          <el-tag v-if="importFile" closable @close="removeImportFile">{{ importFile.name }}</el-tag>
+          <span v-else class="file-hint">支持 txt、md、csv、xlsx、xlsm</span>
+        </div>
       </el-form-item>
       <el-form-item label="启用">
         <el-switch v-model="importForm.enabled" />
@@ -283,7 +285,7 @@ const importForm = reactive({
   enabled: true
 })
 const importFile = ref<File | null>(null)
-const importFileList = ref<any[]>([])
+const importFileInput = ref<HTMLInputElement | null>(null)
 
 function errorText(error: any, fallback: string) {
   const detail = error?.response?.data?.detail
@@ -353,14 +355,20 @@ async function loadReindexRuns() {
   }
 }
 
-function selectImportFile(file: any) {
-  importFile.value = file.raw || null
-  importFileList.value = [file]
+function openImportFilePicker() {
+  importFileInput.value?.click()
+}
+
+function selectImportFile(event: Event) {
+  const input = event.target as HTMLInputElement
+  importFile.value = input.files?.[0] || null
 }
 
 function removeImportFile() {
   importFile.value = null
-  importFileList.value = []
+  if (importFileInput.value) {
+    importFileInput.value.value = ''
+  }
 }
 
 async function importDocument() {
@@ -616,6 +624,22 @@ onMounted(() => {
 
 .knowledge-form {
   max-width: 980px;
+}
+
+.file-picker {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.file-input {
+  display: none;
+}
+
+.file-hint {
+  color: #64748b;
+  font-size: 13px;
 }
 
 .search-input {
