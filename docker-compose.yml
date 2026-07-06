@@ -24,15 +24,20 @@ services:
       start_period: 20s
 
   onebot:
-    image: ${ONEBOT_IMAGE:-ghcr.io/lagrangedev/lagrange.onebot:edge}
+    image: ${NAPCAT_IMAGE:-mlikiowa/napcat-docker:latest}
     restart: always
     depends_on:
       bot-app:
         condition: service_healthy
-    volumes:
-      - ./data/onebot:/app/data
     environment:
-      BOT_CORE_REVERSE_WS_URL: ws://bot-app:8000/onebot/ws
+      - NAPCAT_UID=${NAPCAT_UID:-1000}
+      - NAPCAT_GID=${NAPCAT_GID:-1000}
+    ports:
+      - "127.0.0.1:3001:3001"
+      - "127.0.0.1:6099:6099"
+    volumes:
+      - ./data/napcat/config:/app/napcat/config
+      - ./data/napcat/qq:/app/.config/QQ
 
   postgres:
     image: postgres:16

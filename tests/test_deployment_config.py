@@ -19,6 +19,8 @@ def test_core_ports_are_bound_to_loopback_only():
     compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
 
     assert '"127.0.0.1:8000:8000"' in compose
+    assert '"127.0.0.1:3001:3001"' in compose
+    assert '"127.0.0.1:6099:6099"' in compose
     assert '"127.0.0.1:5432:5432"' in compose
     assert '"127.0.0.1:6379:6379"' in compose
     assert '"0.0.0.0:8000:8000"' not in compose
@@ -40,10 +42,11 @@ def test_compose_persists_runtime_state_and_uses_reverse_ws():
     services = compose["services"]
 
     assert "./data/app:/app/data" in services["bot-app"]["volumes"]
-    assert "./data/onebot:/app/data" in services["onebot"]["volumes"]
+    assert "./data/napcat/config:/app/napcat/config" in services["onebot"]["volumes"]
+    assert "./data/napcat/qq:/app/.config/QQ" in services["onebot"]["volumes"]
     assert "./data/postgres:/var/lib/postgresql/data" in services["postgres"]["volumes"]
+    assert services["onebot"]["image"] == "${NAPCAT_IMAGE:-mlikiowa/napcat-docker:latest}"
     assert services["bot-app"]["environment"]["ONEBOT_REVERSE_WS_URL"] == "ws://bot-app:8000/onebot/ws"
-    assert services["onebot"]["environment"]["BOT_CORE_REVERSE_WS_URL"] == "ws://bot-app:8000/onebot/ws"
     assert services["onebot"]["depends_on"]["bot-app"]["condition"] == "service_healthy"
 
 
@@ -71,11 +74,13 @@ def test_ops_scripts_keep_strict_preflight_and_identifier_guards():
     restore = (ROOT / "scripts/restore_postgres.sh").read_text(encoding="utf-8")
 
     assert 'STRICT_PREFLIGHT="${STRICT_PREFLIGHT:-0}"' in deploy
+    assert 'ONEBOT_ADAPTER="${ONEBOT_ADAPTER:-napcat}"' in deploy
     assert 'REQUIRE_ONEBOT_ONLINE="${REQUIRE_ONEBOT_ONLINE:-0}"' in deploy
     assert 'REQUIRE_ONEBOT_ACTIVITY="${REQUIRE_ONEBOT_ACTIVITY:-0}"' in deploy
     assert 'REQUIRE_MVP_CORE_LOGS="${REQUIRE_MVP_CORE_LOGS:-0}"' in deploy
     assert 'REQUIRE_ADMIN_LITE_AUDIT="${REQUIRE_ADMIN_LITE_AUDIT:-0}"' in deploy
     assert 'scripts/preflight_check.py --env-file "$ENV_FILE" --strict' in deploy
+    assert 'if [ "$ONEBOT_ADAPTER" = "lagrange" ]; then' in deploy
     assert "--require-onebot-online" in deploy
     assert "--require-onebot-activity" in deploy
     assert "--require-mvp-core-logs" in deploy

@@ -1,6 +1,6 @@
 # QQ 群机器人 MVP 本地完成状态
 
-本文用于记录当前 MVP 在“真实 QQ 群验收暂不考虑”口径下的完成状态。真实 Linux 云服务器、Lagrange.OneBot 登录、真实 QQ 群收发、备份恢复演练仍保留在 `MVP验收清单.md` 和 `MVP验收证据矩阵.md` 中，后续上线时再执行。
+本文用于记录当前 MVP 在“真实 QQ 群验收暂不考虑”口径下的完成状态。真实 Linux 云服务器、OneBot 接入层登录、真实 QQ 群收发、备份恢复演练仍保留在 `MVP验收清单.md` 和 `MVP验收证据矩阵.md` 中，后续上线时再执行。
 
 ## 1. 当前结论
 
@@ -14,7 +14,7 @@
 - 后台登录、仪表盘、群设置、系统设置、日志、审计日志。
 - 后台可配置大模型 API、机器人 QQ/昵称、管理员 QQ、群白名单、默认回复模式、命令前缀和限流参数。
 - SQLite 开发模式、PostgreSQL/Redis 生产部署配置。
-- Docker Compose、Lagrange 配置生成、预检、备份、恢复脚本。
+- Docker Compose、NapCat 接入、预检、备份、恢复脚本。
 - 本地 smoke、模拟 OneBot、生产 smoke、机器可读 smoke 报告。
 
 ## 2. 当前证明命令

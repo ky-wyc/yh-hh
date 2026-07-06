@@ -75,19 +75,31 @@ STRICT_PREFLIGHT=1 REQUIRE_ONEBOT_ACTIVITY=1 REQUIRE_MVP_CORE_LOGS=1 REQUIRE_ADM
 
 `preflight_check.py` 会检查生产密码、数据库连接、群号、管理员 QQ、命令前缀、OneBot 反向 WebSocket 地址、模型 Base URL、模型参数和限流参数，正式上线前建议先修完所有 error 和 strict warning。
 
-部署脚本会根据 `.env` 自动生成：
+OneBot 接入层默认使用 NapCat 容器，WebUI 端口只绑定服务器本机：
 
 ```text
-data/onebot/appsettings.json
+127.0.0.1:6099
 ```
 
-OneBot 容器默认使用 `ghcr.io/lagrangedev/lagrange.onebot:edge`。可以参考 `deploy/lagrange/appsettings.example.json` 配置反向 WebSocket，使其连接：
+可以通过 SSH 隧道在本机打开：
+
+```bash
+ssh -L 6099:127.0.0.1:6099 <user>@<server-ip>
+```
+
+然后访问：
+
+```text
+http://127.0.0.1:6099
+```
+
+在 NapCat WebUI 中配置 OneBot v11 WebSocket 客户端，使其主动连接：
 
 ```text
 ws://bot-app:8000/onebot/ws
 ```
 
-`bot-app` 的宿主机端口默认只绑定 `127.0.0.1:8000`，供服务器本机 smoke 和排障使用；对外访问后台请使用 `web-admin` 暴露的端口。生产环境建议再通过 HTTPS 反向代理、服务器防火墙或访问控制保护后台入口。
+Token 使用 `.env` 中的 `ONEBOT_ACCESS_TOKEN`。`bot-app` 的宿主机端口默认只绑定 `127.0.0.1:8000`，供服务器本机 smoke 和排障使用；对外访问后台请使用 `web-admin` 暴露的端口。生产环境建议再通过 HTTPS 反向代理、服务器防火墙或访问控制保护后台入口。
 
 备份和恢复：
 
@@ -114,7 +126,7 @@ python scripts/smoke_check.py --base-url http://127.0.0.1:8000 --username "$ADMI
 真实核心命令完成后，还可以追加 `--require-mvp-core-logs`，要求消息日志中已经记录 `/ping`、`/help`、`/dice`、`/ai` 的处理结果。
 真实群管命令完成后，还可以追加 `--require-admin-lite-audit`，要求审计日志中已经记录 `warn` 和 `banword_add`。
 
-也可以把生产自检和 HTTP smoke 串起来执行。若真实 Lagrange.OneBot 已在线，追加 `--skip-onebot-simulation`，只做在线状态强校验，避免模拟连接临时占用当前 OneBot 连接状态：
+也可以把生产自检和 HTTP smoke 串起来执行。若真实 OneBot 接入层已在线，追加 `--skip-onebot-simulation`，只做在线状态强校验，避免模拟连接临时占用当前 OneBot 连接状态：
 
 ```bash
 python scripts/mvp_acceptance.py --env-file .env --strict-preflight --require-onebot-online --skip-onebot-simulation

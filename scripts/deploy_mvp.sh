@@ -11,6 +11,7 @@ REQUIRE_ONEBOT_ACTIVITY="${REQUIRE_ONEBOT_ACTIVITY:-0}"
 REQUIRE_MVP_CORE_LOGS="${REQUIRE_MVP_CORE_LOGS:-0}"
 REQUIRE_ADMIN_LITE_AUDIT="${REQUIRE_ADMIN_LITE_AUDIT:-0}"
 STRICT_PREFLIGHT="${STRICT_PREFLIGHT:-0}"
+ONEBOT_ADAPTER="${ONEBOT_ADAPTER:-napcat}"
 
 if [ ! -f "$ENV_FILE" ]; then
   echo "Missing $ENV_FILE. Copy .env.production.example to .env and edit it first." >&2
@@ -31,7 +32,10 @@ if [ "$STRICT_PREFLIGHT" = "1" ]; then
 else
   "$PYTHON" scripts/preflight_check.py --env-file "$ENV_FILE"
 fi
-"$PYTHON" scripts/prepare_lagrange_config.py --env-file "$ENV_FILE"
+
+if [ "$ONEBOT_ADAPTER" = "lagrange" ]; then
+  "$PYTHON" scripts/prepare_lagrange_config.py --env-file "$ENV_FILE"
+fi
 
 docker compose up -d --build
 
