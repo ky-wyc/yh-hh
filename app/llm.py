@@ -57,7 +57,7 @@ class LLMService:
         try:
             bot_settings = await repo.get_bot_settings()
             system_prompt = build_system_prompt(bot_settings.bot_nickname_list)
-            text, prompt_tokens, completion_tokens = await self._call_openai_compatible(
+            text, prompt_tokens, completion_tokens = await self._call_model(
                 config,
                 prompt,
                 system_prompt,
@@ -110,7 +110,7 @@ class LLMService:
 
         started = time.perf_counter()
         try:
-            text, prompt_tokens, completion_tokens = await self._call_openai_compatible(
+            text, prompt_tokens, completion_tokens = await self._call_model(
                 config,
                 prompt,
                 system_prompt,
@@ -140,7 +140,7 @@ class LLMService:
         )
         return LLMResult(text=text, model=config.model)
 
-    async def _call_openai_compatible(
+    async def _call_model(
         self,
         config: LLMConfig,
         prompt: str,
@@ -152,29 +152,68 @@ class LLMService:
             client = httpx.AsyncClient(timeout=config.timeout_seconds)
             close_client = True
         try:
-            response = await client.post(
-                f"{config.base_url.rstrip('/')}/chat/completions",
-                headers={"Authorization": f"Bearer {config.api_key}"},
-                json={
-                    "model": config.model,
-                    "temperature": config.temperature,
-                    "max_tokens": config.max_tokens,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": prompt},
-                    ],
-                },
-            )
-            response.raise_for_status()
-            payload = response.json()
-            content = payload["choices"][0]["message"].get("content") or ""
-            usage = payload.get("usage") or {}
-            return content or "我这边没有生成出有效回复。", int(
-                usage.get("prompt_tokens") or 0
-            ), int(usage.get("completion_tokens") or 0)
+            if config.endpoint_type == "responses":
+                return await self._call_responses(config, prompt, system_prompt, client)
+            return await self._call_chat_completions(config, prompt, system_prompt, client)
         finally:
             if close_client:
                 await client.aclose()
+
+    async def _call_chat_completions(
+        self,
+        config: LLMConfig,
+        prompt: str,
+        system_prompt: str,
+        client: httpx.AsyncClient,
+    ) -> tuple[str, int, int]:
+        response = await client.post(
+            f"{config.base_url.rstrip('/')}/chat/completions",
+            headers={"Authorization": f"Bearer {config.api_key}"},
+            json={
+                "model": config.model,
+                "temperature": config.temperature,
+                "max_tokens": config.max_tokens,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt},
+                ],
+            },
+        )
+        response.raise_for_status()
+        payload = response.json()
+        content = payload["choices"][0]["message"].get("content") or ""
+        usage = payload.get("usage") or {}
+        return content or "我这边没有生成出有效回复。", int(
+            usage.get("prompt_tokens") or 0
+        ), int(usage.get("completion_tokens") or 0)
+
+    async def _call_responses(
+        self,
+        config: LLMConfig,
+        prompt: str,
+        system_prompt: str,
+        client: httpx.AsyncClient,
+    ) -> tuple[str, int, int]:
+        response = await client.post(
+            f"{config.base_url.rstrip('/')}/responses",
+            headers={"Authorization": f"Bearer {config.api_key}"},
+            json={
+                "model": config.model,
+                "temperature": config.temperature,
+                "max_output_tokens": config.max_tokens,
+                "input": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt},
+                ],
+            },
+        )
+        response.raise_for_status()
+        payload = response.json()
+        usage = payload.get("usage") or {}
+        content = payload.get("output_text") or response_output_text(payload)
+        return content or "我这边没有生成出有效回复。", int(
+            usage.get("input_tokens") or usage.get("prompt_tokens") or 0
+        ), int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
 
     async def _with_approved_memories(
         self,
@@ -196,3 +235,17 @@ def build_system_prompt(bot_nicknames: list[str]) -> str:
     bot_name = names[0] if names else "助手"
     bot_aliases = "、".join(names) if names else bot_name
     return SYSTEM_PROMPT_TEMPLATE.format(bot_name=bot_name, bot_aliases=bot_aliases)
+
+
+def response_output_text(payload: dict) -> str:
+    parts: list[str] = []
+    for item in payload.get("output") or []:
+        if not isinstance(item, dict):
+            continue
+        for content in item.get("content") or []:
+            if not isinstance(content, dict):
+                continue
+            text = content.get("text")
+            if isinstance(text, str) and text:
+                parts.append(text)
+    return "\n".join(parts)

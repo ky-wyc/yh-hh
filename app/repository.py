@@ -34,6 +34,7 @@ from app.models import (
 @dataclass(slots=True)
 class LLMConfig:
     provider: str
+    endpoint_type: str
     base_url: str
     api_key: str
     model: str
@@ -294,6 +295,7 @@ class Repository:
 
         return LLMConfig(
             provider=await val("llm_provider", self.settings.llm_provider),
+            endpoint_type=await val("llm_endpoint_type", self.settings.llm_endpoint_type),
             base_url=await val("llm_base_url", self.settings.llm_base_url),
             api_key=await val("llm_api_key", self.settings.llm_api_key),
             model=await val("llm_model", self.settings.llm_model),
@@ -307,6 +309,7 @@ class Repository:
     async def update_llm_config(self, changes: dict[str, Any]) -> None:
         key_map = {
             "provider": "llm_provider",
+            "endpoint_type": "llm_endpoint_type",
             "base_url": "llm_base_url",
             "api_key": "llm_api_key",
             "model": "llm_model",

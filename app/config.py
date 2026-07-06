@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     default_reply_mode: str = Field(default="mention_only", alias="DEFAULT_REPLY_MODE")
 
     llm_provider: str = Field(default="openai_compatible", alias="LLM_PROVIDER")
+    llm_endpoint_type: str = Field(default="chat_completions", alias="LLM_ENDPOINT_TYPE")
     llm_base_url: str = Field(default="https://api.openai.com/v1", alias="LLM_BASE_URL")
     llm_api_key: str = Field(default="", alias="LLM_API_KEY")
     llm_model: str = Field(default="gpt-4.1-mini", alias="LLM_MODEL")

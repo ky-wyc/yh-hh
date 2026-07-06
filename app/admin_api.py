@@ -1294,6 +1294,7 @@ async def get_llm_settings(request: Request, session: AsyncSession = Depends(get
     config = await repo.get_llm_config()
     return LLMSettingsOut(
         provider=config.provider,
+        endpoint_type=config.endpoint_type,
         base_url=config.base_url,
         model=config.model,
         temperature=config.temperature,

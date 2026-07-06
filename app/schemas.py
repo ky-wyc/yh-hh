@@ -693,6 +693,7 @@ class BotSettingsUpdate(BaseModel):
 
 class LLMSettingsOut(BaseModel):
     provider: str
+    endpoint_type: str
     base_url: str
     model: str
     temperature: float
@@ -703,6 +704,7 @@ class LLMSettingsOut(BaseModel):
 
 class LLMSettingsUpdate(BaseModel):
     provider: str | None = None
+    endpoint_type: str | None = None
     base_url: str | None = None
     api_key: str | None = Field(default=None)
     model: str | None = None
@@ -716,6 +718,16 @@ class LLMSettingsUpdate(BaseModel):
         if value is not None and not value.strip():
             raise ValueError("value must not be empty")
         return value.strip() if value is not None else value
+
+    @field_validator("endpoint_type")
+    @classmethod
+    def validate_endpoint_type(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        stripped = value.strip()
+        if stripped not in {"chat_completions", "responses"}:
+            raise ValueError("endpoint_type must be chat_completions or responses")
+        return stripped
 
     @field_validator("base_url")
     @classmethod

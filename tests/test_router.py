@@ -298,6 +298,49 @@ async def test_ai_success_uses_openai_compatible_endpoint(settings, repo, messag
     assert sender.group_messages == [("10001", "hello from model")]
 
 
+async def test_ai_success_uses_responses_endpoint(settings, repo, message_router, sender):
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/responses"
+        assert request.headers["authorization"] == "Bearer test-key"
+        payload = json.loads((await request.aread()).decode("utf-8"))
+        assert payload["model"] == "test-model"
+        assert payload["max_output_tokens"] == 1000
+        assert payload["input"][0]["role"] == "system"
+        assert payload["input"][1]["role"] == "user"
+        assert "tester: /ai hello" in payload["input"][1]["content"]
+        return httpx.Response(
+            200,
+            json={
+                "output": [
+                    {
+                        "type": "message",
+                        "content": [{"type": "output_text", "text": "hello from responses"}],
+                    }
+                ],
+                "usage": {"input_tokens": 6, "output_tokens": 4},
+            },
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://llm.test")
+    llm = LLMService(client)
+    router = MessageRouter(settings, llm, message_router.rate_limiter)
+    await repo.update_llm_config(
+        {
+            "endpoint_type": "responses",
+            "base_url": "https://llm.test/v1",
+            "api_key": "test-key",
+            "model": "test-model",
+        }
+    )
+    event = normalize_group_message(group_event("/ai hello", message_id=12), settings)
+
+    outcome = await router.handle(event, repo, sender)
+
+    await client.aclose()
+    assert outcome.replied is True
+    assert sender.group_messages == [("10001", "hello from responses")]
+
+
 async def test_ai_system_prompt_uses_runtime_bot_nickname(settings, repo, message_router, sender):
     async def handler(request: httpx.Request) -> httpx.Response:
         payload = json.loads((await request.aread()).decode("utf-8"))

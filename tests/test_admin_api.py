@@ -91,6 +91,7 @@ def test_llm_settings_mask_api_key(tmp_path):
         assert response.status_code == 200
         payload = response.json()
         assert payload["api_key_configured"] is True
+        assert payload["endpoint_type"] == "chat_completions"
         assert "super-secret" not in str(payload)
 
 
@@ -118,6 +119,31 @@ def test_llm_settings_can_clear_api_key(tmp_path):
 
         assert response.status_code == 200
         assert response.json()["api_key_configured"] is False
+
+
+def test_llm_settings_can_set_responses_endpoint_type(tmp_path):
+    settings = Settings(
+        DATABASE_URL=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",
+        REDIS_URL="",
+        ADMIN_USERNAME="admin",
+        ADMIN_PASSWORD="secret",
+    )
+    app = create_app(settings)
+
+    with TestClient(app) as client:
+        token = client.post(
+            "/api/auth/login", json={"username": "admin", "password": "secret"}
+        ).json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        response = client.patch(
+            "/api/settings/llm",
+            json={"endpoint_type": "responses"},
+            headers=headers,
+        )
+
+        assert response.status_code == 200
+        assert response.json()["endpoint_type"] == "responses"
 
 
 def test_embedding_settings_can_be_managed_and_mask_api_key(tmp_path):
@@ -1198,6 +1224,30 @@ def test_llm_settings_reject_invalid_ranges(tmp_path):
 
         assert temperature.status_code == 422
         assert timeout.status_code == 422
+
+
+def test_llm_settings_reject_invalid_endpoint_type(tmp_path):
+    settings = Settings(
+        DATABASE_URL=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",
+        REDIS_URL="",
+        ADMIN_USERNAME="admin",
+        ADMIN_PASSWORD="secret",
+    )
+    app = create_app(settings)
+
+    with TestClient(app) as client:
+        token = client.post(
+            "/api/auth/login", json={"username": "admin", "password": "secret"}
+        ).json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        response = client.patch(
+            "/api/settings/llm",
+            json={"endpoint_type": "not-real"},
+            headers=headers,
+        )
+
+        assert response.status_code == 422
 
 
 def test_llm_settings_reject_invalid_base_url(tmp_path):

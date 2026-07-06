@@ -5,6 +5,13 @@
       <el-form-item label="Provider">
         <el-input v-model="form.provider" />
       </el-form-item>
+      <el-form-item label="端点类型">
+        <el-select v-model="form.endpoint_type">
+          <el-option label="Chat Completions (/v1/chat/completions)" value="chat_completions" />
+          <el-option label="Responses (/v1/responses)" value="responses" />
+        </el-select>
+        <span class="field-hint">OpenAI 新端点选 Responses；多数中转站仍使用 Chat Completions。</span>
+      </el-form-item>
       <el-form-item label="Base URL">
         <el-input v-model="form.base_url" />
       </el-form-item>
