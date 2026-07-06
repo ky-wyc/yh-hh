@@ -70,6 +70,7 @@ services:
       start_period: 10s
 
   web-admin:
+    image: ${WEB_ADMIN_IMAGE:-qqbot-web-admin}
     build: ./web-admin
     restart: always
     depends_on:

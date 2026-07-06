@@ -35,6 +35,19 @@ def test_web_admin_is_the_public_entrypoint():
     web_admin = compose["services"]["web-admin"]
     assert "8080:80" in web_admin["ports"]
     assert web_admin["depends_on"]["bot-app"]["condition"] == "service_healthy"
+    assert web_admin["image"] == "${WEB_ADMIN_IMAGE:-qqbot-web-admin}"
+    assert web_admin["build"] == "./web-admin"
+
+
+def test_web_admin_image_workflow_publishes_to_ghcr():
+    workflow = (ROOT / ".github/workflows/web-admin-image.yml").read_text(encoding="utf-8")
+    env_example = (ROOT / ".env.production.example").read_text(encoding="utf-8")
+
+    assert "WEB_ADMIN_IMAGE: ghcr.io/ky-wyc/yh-hh-web-admin" in workflow
+    assert "docker/build-push-action@v6" in workflow
+    assert "context: ./web-admin" in workflow
+    assert "push: true" in workflow
+    assert "WEB_ADMIN_IMAGE=ghcr.io/ky-wyc/yh-hh-web-admin:latest" in env_example
 
 
 def test_compose_persists_runtime_state_and_uses_reverse_ws():
